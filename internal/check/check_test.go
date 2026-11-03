@@ -15,35 +15,44 @@ import (
 func TestRun(t *testing.T) {
 	tests := []struct {
 		name  string
-		fix   []string
-		check []config.Check
-		want  check.Result
+		fix   []config.Command
+		check []config.Command
+		want  []check.Outcome
 		file  string
 	}{
 		{
 			name:  "passing checks are named",
-			check: []config.Check{{Name: "t", Cmd: "true"}, {Name: "has a", Cmd: "grep -q a f"}},
-			want:  check.Result{Passed: []string{"t", "has a"}},
+			check: []config.Command{{Name: "t", Cmd: "true"}, {Name: "has a", Cmd: "grep -q a f"}},
+			want:  []check.Outcome{{Name: "t"}, {Name: "has a"}},
 			file:  "a\n",
 		},
 		{
 			name:  "failing check keeps its output",
-			check: []config.Check{{Name: "broken", Cmd: "echo broken; exit 4"}},
-			want:  check.Result{Failed: []check.Failure{{Name: "broken", Output: "broken\nexit status 4"}}},
+			check: []config.Command{{Name: "broken", Cmd: "echo broken; exit 4"}},
+			want:  []check.Outcome{{Name: "broken", Failed: "broken\nexit status 4"}},
 			file:  "a\n",
 		},
 		{
-			name:  "fixer change shows as a diff before checks run",
-			fix:   []string{"printf 'A\\n' > f"},
-			check: []config.Check{{Name: "has A", Cmd: "grep -q A f"}},
-			want:  check.Result{Diff: "f:1\n-\ta\n+\tA\n", Passed: []string{"has A"}},
-			file:  "A\n",
+			name: "each fixer shows its own change, then checks run",
+			fix: []config.Command{
+				{Name: "upper", Cmd: "printf 'A\\n' > f"},
+				{Name: "noop", Cmd: "true"},
+				{Name: "twice", Cmd: "printf 'A\\nA\\n' > f"},
+			},
+			check: []config.Command{{Name: "has A", Cmd: "grep -q A f"}},
+			want: []check.Outcome{
+				{Name: "upper", Diff: "f:1\n-\ta\n+\tA\n"},
+				{Name: "noop"},
+				{Name: "twice", Diff: "f:2\n+\tA\n"},
+				{Name: "has A"},
+			},
+			file: "A\nA\n",
 		},
 		{
-			name: "failing fixer",
-			fix:  []string{"exit 1"},
-			want: check.Result{Failed: []check.Failure{{Name: "exit 1", Output: "exit status 1"}}},
-			file: "a\n",
+			name: "failing fixer keeps what it changed",
+			fix:  []config.Command{{Name: "half", Cmd: "printf 'b\\n' > f; exit 1"}},
+			want: []check.Outcome{{Name: "half", Failed: "exit status 1", Diff: "f:1\n-\ta\n+\tb\n"}},
+			file: "b\n",
 		},
 	}
 	for _, tt := range tests {

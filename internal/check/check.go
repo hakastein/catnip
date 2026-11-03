@@ -10,56 +10,46 @@ import (
 	"github.com/hakastein/catnip/internal/edit"
 )
 
-// Failure is a fixer or check that exited non-zero, with its combined output. Name is the check's name or the
-// fixer's command.
-type Failure struct {
-	Name   string
-	Output string
+// Outcome of one fixer or check, under its configured name.
+type Outcome struct {
+	Name string
+	// Failed holds the combined output and exit status of a command that exited non-zero.
+	Failed string
+	// Diff is what a fixer changed in the file.
+	Diff string
 }
 
-// Result of the commands on one file.
-type Result struct {
-	// Diff is what the fixers changed.
-	Diff   string
-	Failed []Failure
-	// Passed names the checks that passed, in run order.
-	Passed []string
-}
-
-// Run runs the fixers and then the checks on file through sh, in the current directory.
-func Run(file string, fix []string, checks []config.Check) (Result, error) {
-	var r Result
-	if len(fix) > 0 {
+// Run runs the fixers and then the checks on file through sh, in the current directory, and returns their
+// outcomes in run order.
+func Run(file string, fix, check []config.Command) ([]Outcome, error) {
+	var out []Outcome
+	for _, c := range fix {
 		before, err := os.ReadFile(file)
 		if err != nil {
-			return r, err
+			return out, err
 		}
-		for _, cmd := range fix {
-			r.run(cmd, cmd)
-		}
+		o := run(c)
 		after, err := os.ReadFile(file)
 		if err != nil {
-			return r, err
+			return out, err
 		}
-		r.Diff = edit.Diff(file, before, after)
+		o.Diff = edit.Diff(file, before, after)
+		out = append(out, o)
 	}
-	for _, c := range checks {
-		if r.run(c.Name, c.Cmd) {
-			r.Passed = append(r.Passed, c.Name)
-		}
+	for _, c := range check {
+		out = append(out, run(c))
 	}
-	return r, nil
+	return out, nil
 }
 
-func (r *Result) run(name, cmd string) bool {
-	out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
-	if err != nil {
-		msg := strings.TrimRight(string(out), "\n")
-		if msg != "" {
-			msg += "\n"
-		}
-		r.Failed = append(r.Failed, Failure{name, msg + err.Error()})
-		return false
+func run(c config.Command) Outcome {
+	out, err := exec.Command("sh", "-c", c.Cmd).CombinedOutput()
+	if err == nil {
+		return Outcome{Name: c.Name}
 	}
-	return true
+	msg := strings.TrimRight(string(out), "\n")
+	if msg != "" {
+		msg += "\n"
+	}
+	return Outcome{Name: c.Name, Failed: msg + err.Error()}
 }

@@ -11,7 +11,7 @@ import (
 	"github.com/hakastein/catnip/internal/config"
 )
 
-const global = `{"*.php": {"check": {"php lint": "php -l {file}"}}, "*.go": {"fix": ["gofmt -w {file}"], "check": {"go vet": "go vet ."}}}`
+const global = `{"*.php": {"check": {"php lint": "php -l {file}"}}, "*.go": {"fix": {"gofmt": "gofmt -w {file}"}, "check": {"go vet": "go vet ."}}}`
 
 // load writes the global config and a project config into a fresh repository and loads them from its src
 // directory; the working directory stays at the repository root.
@@ -43,36 +43,36 @@ func TestFor(t *testing.T) {
 		name    string
 		project string
 		file    string
-		fix     []string
-		check   []config.Check
+		fix     []config.Command
+		check   []config.Command
 	}{
-		{name: "global rule by base name", project: "{}", file: "src/a.php", check: []config.Check{{Name: "php lint", Cmd: "php -l 'src/a.php'"}}},
+		{name: "global rule by base name", project: "{}", file: "src/a.php", check: []config.Command{{Name: "php lint", Cmd: "php -l 'src/a.php'"}}},
 		{name: "no rule", project: "{}", file: "a.txt"},
 		{
 			name:    "project rule replaces the global one for its glob",
 			project: `{"*.go": {"check": {"lint": "make lint", "build": "make build"}}}`,
 			file:    "a.go",
-			check:   []config.Check{{Name: "build", Cmd: "make build"}, {Name: "lint", Cmd: "make lint"}},
+			check:   []config.Command{{Name: "build", Cmd: "make build"}, {Name: "lint", Cmd: "make lint"}},
 		},
 		{name: "empty project rule disables the global one", project: `{"*.php": {}}`, file: "a.php"},
 		{
 			name:    "glob with a slash matches the path from the root, rules in glob order",
-			project: `{"src/*.php": {"fix": ["fix {file}"]}, "*.php": {"check": {"php lint": "php -l {file}"}}}`,
+			project: `{"src/*.php": {"fix": {"fixer": "fix {file}"}}, "*.php": {"check": {"php lint": "php -l {file}"}}}`,
 			file:    "src/it's.php",
-			fix:     []string{`fix 'src/it'\''s.php'`},
-			check:   []config.Check{{Name: "php lint", Cmd: `php -l 'src/it'\''s.php'`}},
+			fix:     []config.Command{{Name: "fixer", Cmd: `fix 'src/it'\''s.php'`}},
+			check:   []config.Command{{Name: "php lint", Cmd: `php -l 'src/it'\''s.php'`}},
 		},
 		{
 			name:    "glob with a slash does not match deeper",
-			project: `{"src/*.php": {"fix": ["fix {file}"]}}`,
+			project: `{"src/*.php": {"fix": {"fixer": "fix {file}"}}}`,
 			file:    "src/x/a.php",
-			check:   []config.Check{{Name: "php lint", Cmd: "php -l 'src/x/a.php'"}},
+			check:   []config.Command{{Name: "php lint", Cmd: "php -l 'src/x/a.php'"}},
 		},
 		{
 			name:    "commands of several globs come in glob order",
-			project: `{"b*": {"fix": ["second"]}, "*.txt": {"fix": ["first"]}}`,
+			project: `{"b*": {"fix": {"a": "second"}}, "*.txt": {"fix": {"z": "first", "y": "first, by name"}}}`,
 			file:    "b.txt",
-			fix:     []string{"first", "second"},
+			fix:     []config.Command{{Name: "y", Cmd: "first, by name"}, {Name: "z", Cmd: "first"}, {Name: "a", Cmd: "second"}},
 		},
 	}
 	for _, tt := range tests {
@@ -98,8 +98,10 @@ func TestLoadRejectsBrokenConfig(t *testing.T) {
 		{name: "unknown field", project: `{"*.go": {"checks": []}}`, err: `json: unknown field "checks"`},
 		{name: "bad glob", project: `{"[": {}}`, err: `glob "[": syntax error in pattern`},
 		{name: "text after the object", project: `{} {}`, err: "text after the config object"},
-		{name: "null command", project: `{"*.txt": {"check": {"x": null}}}`, err: `glob "*.txt": empty or null command`},
-		{name: "empty check name", project: `{"*.txt": {"check": {"": "true"}}}`, err: `glob "*.txt": empty check name`},
+		{name: "null command", project: `{"*.txt": {"check": {"x": null}}}`, err: `glob "*.txt": check: "x": empty or null command`},
+		{name: "null fixer", project: `{"*.txt": {"fix": {"x": null}}}`, err: `glob "*.txt": fix: "x": empty or null command`},
+		{name: "fixers as a list", project: `{"*.txt": {"fix": ["true"]}}`, err: "cannot unmarshal array"},
+		{name: "empty check name", project: `{"*.txt": {"check": {"": "true"}}}`, err: `glob "*.txt": check: empty name`},
 		{name: "checks as a list", project: `{"*.txt": {"check": ["true"]}}`, err: "cannot unmarshal array"},
 	}
 	for _, tt := range tests {

@@ -16,15 +16,15 @@ import (
 	"strings"
 )
 
-// Rule is what runs on a file matching a glob: Fix commands may change the file, Check commands, keyed by the name
-// catnip reports them under, must not. "{file}" in a command is replaced by the file path.
+// Rule is what runs on a file matching a glob, each command under the name catnip reports it by: Fix commands may
+// change the file, Check commands must not. "{file}" in a command is replaced by the file path.
 type Rule struct {
-	Fix   []string          `json:"fix"`
+	Fix   map[string]string `json:"fix"`
 	Check map[string]string `json:"check"`
 }
 
-// Check is a named check command.
-type Check struct {
+// Command is a named fixer or check.
+type Command struct {
 	Name, Cmd string
 }
 
@@ -71,13 +71,15 @@ func Load(dir string) (*Config, error) {
 			if _, err := path.Match(glob, ""); err != nil {
 				return nil, fmt.Errorf("%s: glob %q: %w", p, glob, err)
 			}
-			for _, cmd := range slices.Concat(r.Fix, slices.Collect(maps.Values(r.Check))) {
-				if strings.TrimSpace(cmd) == "" {
-					return nil, fmt.Errorf("%s: glob %q: empty or null command", p, glob)
+			for name, cmd := range r.Fix {
+				if err := named(name, cmd); err != nil {
+					return nil, fmt.Errorf("%s: glob %q: fix: %w", p, glob, err)
 				}
 			}
-			if _, ok := r.Check[""]; ok {
-				return nil, fmt.Errorf("%s: glob %q: empty check name", p, glob)
+			for name, cmd := range r.Check {
+				if err := named(name, cmd); err != nil {
+					return nil, fmt.Errorf("%s: glob %q: check: %w", p, glob, err)
+				}
 			}
 			c.rules[glob] = r
 		}
@@ -85,8 +87,18 @@ func Load(dir string) (*Config, error) {
 	return c, nil
 }
 
-// For lists the fixers and checks for file, in glob order and checks of one glob by name, with "{file}" filled in.
-func (c *Config) For(file string) (fix []string, check []Check) {
+func named(name, cmd string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("empty name")
+	}
+	if strings.TrimSpace(cmd) == "" {
+		return fmt.Errorf("%q: empty or null command", name)
+	}
+	return nil
+}
+
+// For lists the fixers and checks for file, in glob order and by name within a glob, with "{file}" filled in.
+func (c *Config) For(file string) (fix, check []Command) {
 	name := filepath.Base(file)
 	rel := ""
 	if abs, err := filepath.Abs(file); err == nil && c.Root != "" {
@@ -110,14 +122,18 @@ func (c *Config) For(file string) (fix []string, check []Check) {
 		if ok, _ := path.Match(g, subject); !ok {
 			continue
 		}
-		for _, cmd := range c.rules[g].Fix {
-			fix = append(fix, strings.ReplaceAll(cmd, "{file}", quoted))
-		}
-		for _, name := range slices.Sorted(maps.Keys(c.rules[g].Check)) {
-			check = append(check, Check{name, strings.ReplaceAll(c.rules[g].Check[name], "{file}", quoted)})
-		}
+		fix = append(fix, commands(c.rules[g].Fix, quoted)...)
+		check = append(check, commands(c.rules[g].Check, quoted)...)
 	}
 	return fix, check
+}
+
+func commands(named map[string]string, file string) []Command {
+	var out []Command
+	for _, name := range slices.Sorted(maps.Keys(named)) {
+		out = append(out, Command{name, strings.ReplaceAll(named[name], "{file}", file)})
+	}
+	return out
 }
 
 // root is the nearest directory from dir up that holds .git, or "".
