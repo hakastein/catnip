@@ -19,6 +19,7 @@ func TestRun(t *testing.T) {
 		stdin   string
 		code    int
 		after   string
+		tail    string // the end of stdout
 	}{
 		{name: "edit applied", project: `{"*.txt": {"check": {"ok": "true"}}}`, before: "a\n", args: []string{"edit", "a.txt", "--replace", "a", "b"}, code: ok, after: "b\n"},
 		{
@@ -44,6 +45,25 @@ func TestRun(t *testing.T) {
 		{name: "show past the end", project: `{}`, before: "a\n", args: []string{"show", "a.txt:5"}, code: notApplied, after: "a\n"},
 		{name: "write keeps BOM and CRLF of the file", project: `{}`, before: "\ufeffa\r\n", args: []string{"write", "a.txt"}, stdin: "b\nc\n", code: ok, after: "\ufeffb\r\nc\r\n"},
 		{name: "write keeps a missing final newline", project: `{}`, before: "a", args: []string{"write", "a.txt"}, stdin: "b\n", code: ok, after: "b"},
+		{
+			name:    "fixer change is named, its diff hidden",
+			project: `{"*.txt": {"fix": {"up": "printf 'B\\n' > a.txt"}}}`,
+			before:  "a\n",
+			args:    []string{"edit", "a.txt", "--replace", "a", "b"},
+			code:    ok,
+			after:   "B\n",
+			tail:    "up: fixed\n",
+		},
+		{
+			name:    "fixer diff on request",
+			project: `{"*.txt": {"fix": {"up": "printf 'B\\n' > a.txt"}}}`,
+			before:  "a\n",
+			args:    []string{"write", "--fix-diff", "a.txt"},
+			stdin:   "b\n",
+			code:    ok,
+			after:   "B\n",
+			tail:    "up: fixed\na.txt:1\n-\tb\n+\tB\n",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -63,6 +83,7 @@ func TestRun(t *testing.T) {
 			got, err := os.ReadFile("a.txt")
 			require.NoError(t, err)
 			assert.Equal(t, tt.after, string(got))
+			assert.True(t, strings.HasSuffix(stdout.String(), tt.tail), "stdout: %s", stdout.String())
 		})
 	}
 }

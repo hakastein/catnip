@@ -27,8 +27,10 @@ const (
 
 const usage = `usage:
   catnip show [--hash] [--blame] [-C N] <path>[:<from>-<to> | :<line>[:<column>]]
-  catnip edit <path> <edit>...
-  catnip write <path> < content
+  catnip edit [--fix-diff] <path> <edit>...
+  catnip write [--fix-diff] <path> < content
+
+--fix-diff also prints what each fixer changed
 
 edits, any number, all or none applied:
   --replace OLD NEW [--count N]    replace exact text that occurs N times (default 1)
@@ -109,6 +111,7 @@ func show(args []string, stdout, stderr io.Writer) int {
 }
 
 func editCmd(args []string, stdout, stderr io.Writer) int {
+	fixDiff, args := fixDiffFlag(args)
 	if len(args) == 0 || strings.HasPrefix(args[0], "--") {
 		fmt.Fprint(stderr, "edit needs the file path first\n"+usage)
 		return badUsage
@@ -141,10 +144,19 @@ func editCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "no changes")
 		return ok
 	}
-	return commit(cfg, path, before, after, stdout, stderr)
+	return commit(cfg, path, before, after, fixDiff, stdout, stderr)
+}
+
+// fixDiffFlag takes the leading --fix-diff of edit and write.
+func fixDiffFlag(args []string) (bool, []string) {
+	if len(args) > 0 && args[0] == "--fix-diff" {
+		return true, args[1:]
+	}
+	return false, args
 }
 
 func write(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fixDiff, args := fixDiffFlag(args)
 	if len(args) != 1 {
 		fmt.Fprint(stderr, usage)
 		return badUsage
@@ -168,11 +180,12 @@ func write(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if old != nil {
 		data = edit.Keep(old, data)
 	}
-	return commit(cfg, path, old, data, stdout, stderr)
+	return commit(cfg, path, old, data, fixDiff, stdout, stderr)
 }
 
-// commit writes the file, prints its diff and runs its fixers and checks. before is nil for a new file.
-func commit(cfg *config.Config, path string, before, after []byte, stdout, stderr io.Writer) int {
+// commit writes the file, prints its diff and runs its fixers and checks; a fixer's own diff only with fixDiff.
+// before is nil for a new file.
+func commit(cfg *config.Config, path string, before, after []byte, fixDiff bool, stdout, stderr io.Writer) int {
 	if err := store.Write(path, after); err != nil {
 		fmt.Fprintln(stderr, err)
 		if errors.Is(err, store.ErrPartial) {
@@ -202,7 +215,10 @@ func commit(cfg *config.Config, path string, before, after []byte, stdout, stder
 			fmt.Fprintf(stdout, "%s: passed\n", o.Name)
 		}
 		if o.Diff != "" {
-			fmt.Fprintf(stdout, "%s: fixed\n%s", o.Name, o.Diff)
+			fmt.Fprintf(stdout, "%s: fixed\n", o.Name)
+		}
+		if o.Diff != "" && fixDiff {
+			fmt.Fprint(stdout, o.Diff)
 		}
 	}
 	return code
