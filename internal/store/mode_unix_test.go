@@ -26,6 +26,19 @@ func TestWriteKeepsMode(t *testing.T) {
 	assert.Equal(t, 0o750|os.ModeSetgid, info.Mode()&(os.ModePerm|os.ModeSetgid))
 }
 
+func TestWriteKeepsHardLinks(t *testing.T) {
+	dir := t.TempDir()
+	path, other := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	require.NoError(t, os.WriteFile(path, []byte("old"), 0o644))
+	require.NoError(t, os.Link(path, other))
+
+	require.NoError(t, store.Write(path, []byte("new")))
+
+	got, err := os.ReadFile(other)
+	require.NoError(t, err)
+	assert.Equal(t, "new", string(got))
+}
+
 func TestWriteNewFileUsesUmask(t *testing.T) {
 	old := syscall.Umask(0o027)
 	t.Cleanup(func() { syscall.Umask(old) })

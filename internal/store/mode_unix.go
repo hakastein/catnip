@@ -13,3 +13,6 @@ func newFileMode() fs.FileMode {
 	syscall.Umask(mask)
 	return 0o666 &^ fs.FileMode(mask)
 }
+
+// links is the number of hard links to the file.
+func links(info fs.FileInfo) uint64 { return uint64(info.Sys().(*syscall.Stat_t).Nlink) }

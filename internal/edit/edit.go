@@ -77,7 +77,7 @@ func lf(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }
 // Encode is the inverse of Decode.
 func (e Encoding) Encode(s string) []byte {
 	if e.CRLF {
-		s = strings.ReplaceAll(lf(s), "\n", "\r\n")
+		s = strings.ReplaceAll(s, "\n", "\r\n")
 	}
 	if e.BOM {
 		s = bom + s
@@ -88,12 +88,18 @@ func (e Encoding) Encode(s string) []byte {
 // Keep gives data the BOM, line terminator style and final newline of the existing content old.
 // An old content without a line break has no terminator style, so data keeps its own.
 func Keep(old, data []byte) []byte {
+	if len(old) == 0 {
+		return data
+	}
 	oldText, enc := Decode(old)
 	text, own := Decode(data)
 	if !strings.Contains(oldText, "\n") {
 		enc.CRLF = own.CRLF
 	}
-	if oldText != "" {
+	if enc.CRLF {
+		text = lf(text) // mixed input: Decode left its CRLF in place
+	}
+	if oldText != "" && text != "" {
 		text = strings.TrimSuffix(text, "\n")
 		if strings.HasSuffix(oldText, "\n") {
 			text += "\n"
@@ -213,7 +219,7 @@ func resolve(text string, op Op) ([]change, string) {
 			}
 			if j < 0 {
 				return nil, fmt.Sprintf("end anchor %s not found after line %d", quote(op.Until), lineOf(text, start)) +
-					similar(text, op.Until)
+					similar(text, op.Until, lineOf(text, start))
 			}
 			end = j + len(op.Until)
 		}
@@ -223,7 +229,7 @@ func resolve(text string, op Op) ([]change, string) {
 	if len(cs) == 0 && op.LineStart && strings.Contains(text, op.Old) {
 		return nil, "not found at the start of a line: " + quote(op.Old) +
 			"; batch text is whole lines, edit part of a line with arguments: catnip edit replace <path> <old> <new>" +
-			similar(text, op.Old)
+			similar(text, op.Old, 0)
 	}
 	if len(cs) == 0 {
 		return nil, "not found: " + quote(op.Old) + diagnose(text, op.Old)
@@ -339,7 +345,7 @@ func diagnose(text, needle string) string {
 		}
 	}
 	if len(want) < 2 || best == 0 || best == len(want) {
-		return similar(text, needle)
+		return similar(text, needle, 0)
 	}
 	n := bestAt + best + 1
 	if n > len(lines) {
@@ -350,8 +356,9 @@ func diagnose(text, needle string) string {
 }
 
 // similar lists up to three lines most like the first non-blank line of needle, ignoring indentation. Lines that
-// begin with that line exactly, indentation included, come first: they only have more text after it.
-func similar(text, needle string) string {
+// begin with that line exactly, indentation included, come first: they only have more text after it. Lines up to
+// after are skipped.
+func similar(text, needle string, after int) string {
 	var raw, probe string
 	for _, l := range strings.Split(needle, "\n") {
 		if raw, probe = l, strings.TrimSpace(l); probe != "" {
@@ -368,7 +375,8 @@ func similar(text, needle string) string {
 	var hits []hit
 	m := difflib.NewMatcher(nil, strings.Split(probe, ""))
 	lines := Lines(text)
-	for i, l := range lines {
+	for i, l := range lines[after:] {
+		i += after
 		if strings.HasPrefix(l, raw) {
 			hits = append(hits, hit{i + 1, 2})
 			continue

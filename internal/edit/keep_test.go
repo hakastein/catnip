@@ -17,6 +17,8 @@ func TestKeep(t *testing.T) {
 		{"mixed input over CRLF gets CRLF only", "a\r\nb\r\n", "x\r\ny\nz\r\n", "x\r\ny\r\nz\r\n"},
 		{"old content without a line break keeps the input terminators", "x", "a\r\nb\r\n", "a\r\nb"},
 		{"empty old content keeps the input as is", "", "a\r\nb\r\n", "a\r\nb\r\n"},
+		{"empty old content keeps the input BOM", "", "\ufeffx\n", "\ufeffx\n"},
+		{"empty input empties the file", "a\r\n", "", ""},
 		{"missing final newline is kept", "same", "same\n", "same"},
 		{"final newline is kept", "a\n", "b", "b\n"},
 	}

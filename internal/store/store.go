@@ -12,7 +12,8 @@ import (
 // Write replaces path with data through a temporary file and rename in the same directory, so a reader never sees
 // a partial file. An existing file keeps its permissions; a symlink keeps pointing at its target, which is
 // written, and a symlink to a missing file is an error. A new file gets the default mode of the platform, and
-// missing parent directories are created.
+// missing parent directories are created. A file with several hard links is overwritten in place, not atomically,
+// so every link sees the new content.
 func Write(path string, data []byte) error {
 	switch real, err := filepath.EvalSymlinks(path); {
 	case err == nil:
@@ -28,6 +29,9 @@ func Write(path string, data []byte) error {
 	switch info, err := os.Stat(path); {
 	case err == nil:
 		mode = info.Mode() & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
+		if links(info) > 1 { // a rename would detach the other names of the file from the new content
+			return os.WriteFile(path, data, mode)
+		}
 	case errors.Is(err, fs.ErrNotExist):
 		mode = newFileMode()
 		if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {

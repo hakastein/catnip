@@ -80,10 +80,16 @@ func TestApply(t *testing.T) {
 			fails: fail(0, "not found at the start of a line: \"  foo();\"; batch text is whole lines, edit part of a line with arguments: catnip edit replace <path> <old> <new>; similar lines:\n  2:     foo();"),
 		},
 		{
-			name:  "end anchor that only begins a line names that line first",
-			files: map[string][]byte{"f": []byte("class A {\n    function f()\n    {\n        if (x) {\n        }\n    } // f\n}\n")},
+			name:  "end anchor that only begins a line is named first, lines before the start are skipped",
+			files: map[string][]byte{"f": []byte("class A {\n    } // before\n    function f()\n    {\n        if (x) {\n        }\n        if (y) {\n        }\n        if (z) {\n        }\n    } // f\n}\n")},
 			ops:   []edit.Op{{File: "f", Old: "    function f()\n", Until: "    }\n", Count: 1, LineStart: true}},
-			fails: fail(0, "end anchor \"    }\" not found after line 2; similar lines:\n  5:         }\n  6:     } // f\n  7: }"),
+			fails: fail(0, "end anchor \"    }\" not found after line 3; similar lines:\n  6:         }\n  8:         }\n  11:     } // f"),
+		},
+		{
+			name:  "CRLF file keeps a stray CR in an untouched line",
+			files: map[string][]byte{"f": []byte("a\r\r\nb\r\n")},
+			ops:   []edit.Op{{File: "f", Old: "b", New: "B", Count: 1}},
+			want:  map[string][]byte{"f": []byte("a\r\r\nB\r\n")},
 		},
 		{
 			name:  "block from start anchor through end anchor",
@@ -110,10 +116,10 @@ func TestApply(t *testing.T) {
 			fails: fail(0, "not found: \"func c() {\"; similar lines:\n  1: func a() {\n  5: func b() {"),
 		},
 		{
-			name:  "block end anchor only before start names similar lines",
+			name:  "block end anchor only before start is not suggested",
 			files: map[string][]byte{"f": []byte(src)},
 			ops:   []edit.Op{{File: "f", Old: "\treturn 2\n", Until: "func a", New: "", Count: 1}},
-			fails: fail(0, "end anchor \"func a\" not found after line 6; similar lines:\n  1: func a() {"),
+			fails: fail(0, `end anchor "func a" not found after line 6`),
 		},
 		{
 			name:  "block start anchor found again without an end anchor",
