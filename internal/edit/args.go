@@ -48,11 +48,19 @@ func ParseArgs(args []string) ([]Op, error) {
 				return nil, fmt.Errorf("--lines: %q is not FROM#HASH[-TO#HASH] as catnip show --hash prints it", args[i+1])
 			}
 			r := LineRange{FromHash: m[2], ToHash: m[2]}
-			r.From, _ = strconv.Atoi(m[1])
+			var err error
+			if r.From, err = strconv.Atoi(m[1]); err != nil {
+				return nil, fmt.Errorf("--lines: %w", err)
+			}
 			r.To = r.From
 			if m[3] != "" {
-				r.To, _ = strconv.Atoi(m[3])
+				if r.To, err = strconv.Atoi(m[3]); err != nil {
+					return nil, fmt.Errorf("--lines: %w", err)
+				}
 				r.ToHash = m[4]
+			}
+			if r.From < 1 || r.To < r.From {
+				return nil, fmt.Errorf("--lines: %q: lines start at 1 and the range ends after it starts", args[i+1])
 			}
 			ops = append(ops, Op{Lines: &r, New: args[i+2]})
 			i += 3
