@@ -4,6 +4,7 @@ package edit
 import (
 	"fmt"
 	"hash/fnv"
+	"slices"
 	"sort"
 	"strings"
 
@@ -108,6 +109,8 @@ func Hash(line string) string {
 type change struct {
 	start, end, op int
 	text           string
+	// chop drops the line break before the change: deleting an unterminated last line keeps the file unterminated.
+	chop bool
 }
 
 // Apply applies ops to the raw content of one file. Every target is resolved against the original content, so line
@@ -133,25 +136,29 @@ func Apply(raw []byte, ops []Op) ([]byte, []Failure) {
 	}
 	sort.SliceStable(changes, func(a, b int) bool { return changes[a].start < changes[b].start })
 	var b strings.Builder
-	pos, owner := 0, -1
+	pos, owner, chop := 0, -1, false
 	for _, c := range changes {
 		if c.start < pos {
 			f := Failure{c.op, fmt.Sprintf("overlaps edit %d", owner+1)}
-			if n := len(fails); n == 0 || fails[n-1] != f { // every match of a --count edit overlaps alike
+			if !slices.Contains(fails, f) { // every match of a --count edit overlaps alike
 				fails = append(fails, f)
 			}
 			continue
 		}
 		b.WriteString(text[pos:c.start])
 		b.WriteString(c.text)
-		pos, owner = c.end, c.op
+		pos, owner, chop = c.end, c.op, c.chop
 	}
 	if len(fails) > 0 {
 		sort.SliceStable(fails, func(a, b int) bool { return fails[a].Op < fails[b].Op })
 		return nil, fails
 	}
 	b.WriteString(text[pos:])
-	return enc.Encode(b.String()), nil
+	out := b.String()
+	if chop {
+		out = strings.TrimSuffix(out, "\n")
+	}
+	return enc.Encode(out), nil
 }
 
 func resolve(text string, op Op) ([]change, string) {
@@ -208,17 +215,13 @@ func resolveLines(text string, op Op) ([]change, string) {
 		end += len(l) + 1
 	}
 	// New text is whole lines: it ends with a terminator unless it replaces an unterminated last line, and deleting
-	// that line takes the terminator before it, so the file still ends without one.
+	// that line also drops the terminator before it, so the file still ends without one.
 	newText := strings.TrimSuffix(op.New, "\n")
-	switch {
-	case end <= len(text):
-		if op.New != "" {
-			newText += "\n"
-		}
-	case op.New == "" && start > 0:
-		start, end = start-1, len(text)
-	default:
-		end = len(text)
+	if end > len(text) {
+		return []change{{start: start, end: len(text), text: newText, chop: op.New == ""}}, ""
+	}
+	if op.New != "" {
+		newText += "\n"
 	}
 	return []change{{start: start, end: end, text: newText}}, ""
 }

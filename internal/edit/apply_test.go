@@ -169,6 +169,37 @@ func TestApply(t *testing.T) {
 			want: "a",
 		},
 		{
+			name: "replacing the line before a deleted unterminated last line",
+			file: "a\nb",
+			ops: []edit.Op{
+				{Lines: lines(1, "a", 1, "a"), New: "A"},
+				{Lines: lines(2, "b", 2, "b")},
+			},
+			want: "A",
+		},
+		{
+			name: "deleting the only, unterminated line",
+			file: "b",
+			ops:  []edit.Op{{Lines: lines(1, "b", 1, "b")}},
+			want: "",
+		},
+		{
+			name: "overlaps of several counted edits are reported once each",
+			file: "xaxa\n",
+			ops: []edit.Op{
+				{Lines: lines(1, "xaxa", 1, "xaxa"), New: "y"},
+				{Old: "a", New: "b", Count: 2},
+				{Old: "x", New: "z", Count: 2},
+			},
+			fails: []edit.Failure{{Op: 1, Reason: "overlaps edit 1"}, {Op: 2, Reason: "overlaps edit 1"}},
+		},
+		{
+			name:  "a prefix shorter than four letters is not suggested",
+			file:  "привет мир\n",
+			ops:   []edit.Op{{Old: "приXYZ", New: "x", Count: 1}},
+			fails: fail(0, `not found: "приXYZ"`),
+		},
+		{
 			name: "every edit resolves against the original content",
 			file: "a\nb\nc\n",
 			ops: []edit.Op{
