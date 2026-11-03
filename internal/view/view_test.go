@@ -77,7 +77,8 @@ func TestBlame(t *testing.T) {
 	require.NoError(t, os.WriteFile(file, []byte("one\ntwo\n"), 0o644))
 	git := func(args ...string) {
 		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=Ann", "-c", "user.email=a@x", "-c", "commit.gpgsign=false"}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_AUTHOR_DATE=2026-01-02T12:00:00Z", "GIT_COMMITTER_DATE=2026-01-02T12:00:00Z")
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
+			"GIT_AUTHOR_DATE=2026-01-02T12:00:00Z", "GIT_COMMITTER_DATE=2026-01-02T12:00:00Z")
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, string(out))
 	}

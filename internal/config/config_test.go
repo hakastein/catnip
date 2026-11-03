@@ -68,6 +68,12 @@ func TestFor(t *testing.T) {
 			file:    "src/x/a.php",
 			check:   []string{"php -l 'src/x/a.php'"},
 		},
+		{
+			name:    "commands of several globs come in glob order",
+			project: `{"b*": {"fix": ["second"]}, "*.txt": {"fix": ["first"]}}`,
+			file:    "b.txt",
+			fix:     []string{"first", "second"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -92,6 +98,7 @@ func TestLoadRejectsBrokenConfig(t *testing.T) {
 		{name: "unknown field", project: `{"*.go": {"checks": []}}`, err: `json: unknown field "checks"`},
 		{name: "bad glob", project: `{"[": {}}`, err: `glob "[": syntax error in pattern`},
 		{name: "text after the object", project: `{} {}`, err: "text after the config object"},
+		{name: "null command", project: `{"*.txt": {"check": [null]}}`, err: `glob "*.txt": empty or null command`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

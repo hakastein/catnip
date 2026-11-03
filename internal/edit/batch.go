@@ -28,7 +28,7 @@ func ParseArgs(args []string) (Op, error) {
 	if len(args) < 2 {
 		return Op{}, fmt.Errorf("usage: edit <verb>[*N] <target> <text>...")
 	}
-	return build(args[0], args[1], args[2:])
+	return build(args[0], args[1], args[2:], false)
 }
 
 // ParseBatch reads ops from a batch:
@@ -39,7 +39,8 @@ func ParseArgs(args []string) (Op, error) {
 //	<text>
 //	@@@ end
 //
-// Section text is taken verbatim, line terminators included. Lines between ops must be blank.
+// Section text is taken verbatim, line terminators included, so it is whole lines: the text to find and the end
+// anchor match only at the start of a line. Lines between ops must be blank.
 func ParseBatch(in string) ([]Op, error) {
 	var ops []Op
 	var head string
@@ -71,7 +72,7 @@ func ParseBatch(in string) ([]Op, error) {
 				}
 				texts = texts[1:]
 			}
-			op, err := build(verb, target, texts)
+			op, err := build(verb, target, texts, true)
 			if err != nil {
 				return nil, fmt.Errorf("line %d: %s: %w", n+1, head, err)
 			}
@@ -96,13 +97,13 @@ func ParseBatch(in string) ([]Op, error) {
 	return ops, nil
 }
 
-func build(verbCount, target string, texts []string) (Op, error) {
+func build(verbCount, target string, texts []string, lineStart bool) (Op, error) {
 	verb, count, counted := strings.Cut(verbCount, "*")
 	want, ok := verbs[verb]
 	if !ok {
 		return Op{}, fmt.Errorf("unknown verb %q: want replace, block, before or after", verb)
 	}
-	op := Op{File: target, Kind: kinds[verb], Count: 1}
+	op := Op{File: target, Kind: kinds[verb], Count: 1, LineStart: lineStart}
 	if target == "" {
 		return Op{}, fmt.Errorf("missing target")
 	}

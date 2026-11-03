@@ -18,12 +18,12 @@ func TestParseBatch(t *testing.T) {
 		{
 			name: "replace keeps quotes, backslashes, dollars and triple quotes verbatim",
 			in:   "@@@ replace a.php\n$x = \"a\\n\";\n@@@ with\n$x = '''b\\t''' . `c`;\n@@@ end\n",
-			want: []edit.Op{{File: "a.php", Old: "$x = \"a\\n\";\n", New: "$x = '''b\\t''' . `c`;\n", Count: 1}},
+			want: []edit.Op{{File: "a.php", Old: "$x = \"a\\n\";\n", New: "$x = '''b\\t''' . `c`;\n", Count: 1, LineStart: true}},
 		},
 		{
 			name: "lines like markers are text",
 			in:   "@@@ replace d.diff\n@@ -1,2 +1,3 @@\n  @@@ with\n@@@\n@@@ with\n@@@end\n@@@ end\n",
-			want: []edit.Op{{File: "d.diff", Old: "@@ -1,2 +1,3 @@\n  @@@ with\n@@@\n", New: "@@@end\n", Count: 1}},
+			want: []edit.Op{{File: "d.diff", Old: "@@ -1,2 +1,3 @@\n  @@@ with\n@@@\n", New: "@@@end\n", Count: 1, LineStart: true}},
 		},
 		{
 			name: "count, block, inserts and blank lines between ops",
@@ -32,18 +32,18 @@ func TestParseBatch(t *testing.T) {
 				"@@@ before c.go\nfunc g\n@@@ insert\n// g\n@@@ end\n" +
 				"@@@ after c.go\n}\n@@@ insert\n\n@@@ end\n",
 			want: []edit.Op{
-				{File: "a b.go", Old: "x\n", Count: 2},
-				{File: "c.go", Old: "func f() {\n", Until: "}\n", New: "func f() {}\n", Count: 1},
-				{File: "c.go", Kind: edit.Before, Old: "func g\n", New: "// g\n", Count: 1},
-				{File: "c.go", Kind: edit.After, Old: "}\n", New: "\n", Count: 1},
+				{File: "a b.go", Old: "x\n", Count: 2, LineStart: true},
+				{File: "c.go", Old: "func f() {\n", Until: "}\n", New: "func f() {}\n", Count: 1, LineStart: true},
+				{File: "c.go", Kind: edit.Before, Old: "func g\n", New: "// g\n", Count: 1, LineStart: true},
+				{File: "c.go", Kind: edit.After, Old: "}\n", New: "\n", Count: 1, LineStart: true},
 			},
 		},
 		{
 			name: "line targets",
 			in:   "@@@ replace a.go:3#00ff-5#abcd\n@@@ with\nx\n@@@ end\n@@@ after a.go:7#1234\n@@@ insert\ny\n@@@ end\n",
 			want: []edit.Op{
-				{File: "a.go", Lines: &edit.LineRange{From: 3, To: 5, FromHash: "00ff", ToHash: "abcd"}, New: "x\n", Count: 1},
-				{File: "a.go", Kind: edit.After, Lines: &edit.LineRange{From: 7, To: 7, FromHash: "1234", ToHash: "1234"}, New: "y\n", Count: 1},
+				{File: "a.go", Lines: &edit.LineRange{From: 3, To: 5, FromHash: "00ff", ToHash: "abcd"}, New: "x\n", Count: 1, LineStart: true},
+				{File: "a.go", Kind: edit.After, Lines: &edit.LineRange{From: 7, To: 7, FromHash: "1234", ToHash: "1234"}, New: "y\n", Count: 1, LineStart: true},
 			},
 		},
 		{name: "empty", in: "\n", err: "empty batch"},

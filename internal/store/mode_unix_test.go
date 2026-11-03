@@ -17,13 +17,13 @@ import (
 func TestWriteKeepsMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.sh")
 	require.NoError(t, os.WriteFile(path, []byte("old"), 0o750))
-	require.NoError(t, os.Chmod(path, 0o750))
+	require.NoError(t, os.Chmod(path, 0o750|os.ModeSetgid))
 
 	require.NoError(t, store.Write(path, []byte("new")))
 
 	info, err := os.Stat(path)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o750), info.Mode().Perm())
+	assert.Equal(t, 0o750|os.ModeSetgid, info.Mode()&(os.ModePerm|os.ModeSetgid))
 }
 
 func TestWriteNewFileUsesUmask(t *testing.T) {

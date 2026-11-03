@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/hakastein/catnip/internal/check"
@@ -41,7 +42,10 @@ batch op:
   @@@ with             (replace, block) or @@@ insert (before, after)
   <new text>
   @@@ end
-exit: 0 written and checks passed, 1 nothing written, 2 bad arguments or config, 3 written and a check failed
+exit: 0 written and checks passed, 1 nothing written, 2 bad arguments or config,
+  3 written but a fixer or check failed, or the batch was written only in part
+batch text is whole lines: the text to find and the end anchor match at the start of a line;
+edit part of a line with arguments
 `
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
@@ -139,11 +143,22 @@ func editCmd(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return badUsage
 	}
 	before := map[string][]byte{}
+	spelling := map[string]string{} // one physical file → the first path naming it in the batch
 	var paths []string
-	for _, op := range ops {
-		if _, seen := before[op.File]; seen {
+	for i, op := range ops {
+		key := op.File
+		if real, err := filepath.EvalSymlinks(key); err == nil {
+			key = real
+		}
+		if key, err = filepath.Abs(key); err != nil {
+			fmt.Fprintln(stderr, err)
+			return notApplied
+		}
+		if p, seen := spelling[key]; seen {
+			ops[i].File = p
 			continue
 		}
+		spelling[key] = op.File
 		raw, err := os.ReadFile(op.File)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
@@ -193,6 +208,11 @@ func write(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		fmt.Fprintln(stderr, err)
 		return notApplied
+	}
+	if old != nil { // an overwrite keeps the file's BOM and line terminators
+		_, enc := edit.Decode(old)
+		text, _ := edit.Decode(data)
+		data = enc.Encode(text)
 	}
 	return commit(cfg, []string{path}, map[string][]byte{path: old}, map[string][]byte{path: data}, stdout, stderr)
 }

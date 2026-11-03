@@ -32,6 +32,8 @@ type Op struct {
 	Until string
 	// Count is how many times Old must occur; every occurrence is edited.
 	Count int
+	// LineStart makes Old and Until match only at the start of a line.
+	LineStart bool
 	// Lines addresses whole lines instead of text.
 	Lines *LineRange
 	New   string
@@ -65,10 +67,12 @@ func Decode(raw []byte) (string, Encoding) {
 		e.BOM, s = true, s[len(bom):]
 	}
 	if n := strings.Count(s, "\n"); n > 0 && strings.Count(s, "\r\n") == n {
-		e.CRLF, s = true, strings.ReplaceAll(s, "\r\n", "\n")
+		e.CRLF, s = true, lf(s)
 	}
 	return s, e
 }
+
+func lf(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }
 
 // Encode is the inverse of Decode.
 func (e Encoding) Encode(s string) []byte {
@@ -125,6 +129,9 @@ func Apply(files map[string][]byte, ops []Op) (map[string][]byte, []Failure) {
 			d.text, d.enc = Decode(raw)
 			docs[op.File] = d
 		}
+		if d.enc.CRLF { // the caller may send CRLF text for a CRLF file
+			op.Old, op.Until, op.New = lf(op.Old), lf(op.Until), lf(op.New)
+		}
 		cs, reason := resolve(d.text, op)
 		if reason != "" {
 			fails = append(fails, Failure{i, op.File, reason})
@@ -177,31 +184,34 @@ func resolve(text string, op Op) ([]change, string) {
 	}
 	var cs []change
 	for from := 0; ; {
-		i := strings.Index(text[from:], op.Old)
-		if i < 0 {
+		start := index(text, op.Old, from, op.LineStart)
+		if start < 0 {
 			break
 		}
-		start, end := from+i, from+i+len(op.Old)
+		end := start + len(op.Old)
 		if op.Until != "" {
-			j := strings.Index(text[end:], op.Until)
-			if j < 0 {
-				return nil, fmt.Sprintf("end anchor %s not found after line %d", quote(op.Until), lineOf(text, start))
+			j := index(text, op.Until, end, op.LineStart)
+			if j < 0 && len(cs) >= op.Count {
+				return nil, mismatch(text, op, append(cs, change{start: start}), "at least ")
 			}
-			end += j + len(op.Until)
+			if j < 0 {
+				return nil, fmt.Sprintf("end anchor %s not found after line %d", quote(op.Until), lineOf(text, start)) +
+					similar(text, op.Until)
+			}
+			end = j + len(op.Until)
 		}
 		cs = append(cs, change{start: start, end: end})
 		from = end
 	}
+	if len(cs) == 0 && op.LineStart && strings.Contains(text, op.Old) {
+		return nil, "not found at the start of a line: " + quote(op.Old) +
+			"; batch text is whole lines, edit part of a line with arguments: catnip edit replace <path> <old> <new>"
+	}
 	if len(cs) == 0 {
-		return nil, "not found: " + quote(op.Old) + similar(text, op.Old)
+		return nil, "not found: " + quote(op.Old) + diagnose(text, op.Old)
 	}
 	if len(cs) != op.Count {
-		lines := make([]string, len(cs))
-		for i, c := range cs {
-			lines[i] = fmt.Sprint(lineOf(text, c.start))
-		}
-		return nil, fmt.Sprintf("found %d times, expected %d: %s at lines %s",
-			len(cs), op.Count, quote(op.Old), strings.Join(lines, ", "))
+		return nil, mismatch(text, op, cs, "")
 	}
 	for i, c := range cs {
 		switch op.Kind {
@@ -214,6 +224,29 @@ func resolve(text string, op Op) ([]change, string) {
 		}
 	}
 	return cs, ""
+}
+
+// index finds s in text at or after from; with lineStart, only where s starts a line.
+func index(text, s string, from int, lineStart bool) int {
+	for {
+		i := strings.Index(text[from:], s)
+		if i < 0 {
+			return -1
+		}
+		if i += from; !lineStart || i == 0 || text[i-1] == '\n' {
+			return i
+		}
+		from = i + 1
+	}
+}
+
+func mismatch(text string, op Op, cs []change, atLeast string) string {
+	lines := make([]string, len(cs))
+	for i, c := range cs {
+		lines[i] = fmt.Sprint(lineOf(text, c.start))
+	}
+	return fmt.Sprintf("found %s%d times, expected %d: %s at lines %s",
+		atLeast, len(cs), op.Count, quote(op.Old), strings.Join(lines, ", "))
 }
 
 func resolveLines(text string, op Op) ([]change, string) {
@@ -271,6 +304,31 @@ func quote(s string) string {
 		first += "…"
 	}
 	return fmt.Sprintf("%q", first)
+}
+
+// diagnose explains a text that was not found: where a multi-line text stops matching the file, or else the lines
+// most like its first line.
+func diagnose(text, needle string) string {
+	want, lines := Lines(needle), Lines(text)
+	bestAt, best := 0, 0
+	for i := range lines {
+		k := 0
+		for k < len(want) && i+k < len(lines) && lines[i+k] == want[k] {
+			k++
+		}
+		if k > best {
+			bestAt, best = i, k
+		}
+	}
+	if len(want) < 2 || best == 0 || best == len(want) {
+		return similar(text, needle)
+	}
+	n := bestAt + best + 1
+	if n > len(lines) {
+		return fmt.Sprintf("; lines %d-%d match its first %d lines, then the file ends", bestAt+1, n-1, best)
+	}
+	return fmt.Sprintf("; lines %d-%d match its first %d lines, then the file has:\n  %d: %s",
+		bestAt+1, n-1, best, n, lines[n-1])
 }
 
 // similar lists up to three lines most like the first non-blank line of needle, ignoring indentation.

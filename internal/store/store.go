@@ -3,6 +3,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -10,17 +11,23 @@ import (
 
 // Write replaces path with data through a temporary file and rename in the same directory, so a reader never sees
 // a partial file. An existing file keeps its permissions; a symlink keeps pointing at its target, which is
-// written. A new file gets the default mode of the platform, and missing parent directories are created.
+// written, and a symlink to a missing file is an error. A new file gets the default mode of the platform, and
+// missing parent directories are created.
 func Write(path string, data []byte) error {
-	if real, err := filepath.EvalSymlinks(path); err == nil {
+	switch real, err := filepath.EvalSymlinks(path); {
+	case err == nil:
 		path = real
-	} else if !errors.Is(err, fs.ErrNotExist) {
+	case !errors.Is(err, fs.ErrNotExist):
 		return err
+	default:
+		if info, err := os.Lstat(path); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s: symlink to a missing file", path)
+		}
 	}
 	var mode fs.FileMode
 	switch info, err := os.Stat(path); {
 	case err == nil:
-		mode = info.Mode().Perm()
+		mode = info.Mode() & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
 	case errors.Is(err, fs.ErrNotExist):
 		mode = newFileMode()
 		if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {

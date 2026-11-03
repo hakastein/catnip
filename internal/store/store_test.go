@@ -52,3 +52,15 @@ func TestWriteThroughSymlink(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "new", string(got))
 }
+
+func TestWriteRefusesSymlinkToMissingFile(t *testing.T) {
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink("missing", link))
+
+	err := store.Write(link, []byte("new"))
+
+	assert.ErrorContains(t, err, "symlink to a missing file")
+	dest, err := os.Readlink(link)
+	require.NoError(t, err)
+	assert.Equal(t, "missing", dest)
+}

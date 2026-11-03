@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -35,10 +36,11 @@ const ProjectFile = ".catnip.json"
 // containing dir. A project rule replaces the global rule for the same glob. A missing file is no rules.
 func Load(dir string) (*Config, error) {
 	c := &Config{Root: root(dir), rules: map[string]Rule{}}
-	paths := []string{}
-	if d, err := os.UserConfigDir(); err == nil {
-		paths = append(paths, filepath.Join(d, "catnip", "config.json"))
+	d, err := os.UserConfigDir()
+	if err != nil {
+		return nil, fmt.Errorf("user config directory: %w", err)
 	}
+	paths := []string{filepath.Join(d, "catnip", "config.json")}
 	if c.Root != "" {
 		paths = append(paths, filepath.Join(c.Root, ProjectFile))
 	}
@@ -62,6 +64,11 @@ func Load(dir string) (*Config, error) {
 		for glob, r := range rules {
 			if _, err := path.Match(glob, ""); err != nil {
 				return nil, fmt.Errorf("%s: glob %q: %w", p, glob, err)
+			}
+			for _, cmd := range slices.Concat(r.Fix, r.Check) {
+				if strings.TrimSpace(cmd) == "" {
+					return nil, fmt.Errorf("%s: glob %q: empty or null command", p, glob)
+				}
 			}
 			c.rules[glob] = r
 		}
