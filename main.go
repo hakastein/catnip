@@ -19,32 +19,24 @@ import (
 
 // Exit codes.
 const (
-	ok          = 0 // applied, checks passed
+	ok          = 0 // written, checks passed
 	notApplied  = 1 // nothing written
 	badUsage    = 2 // bad arguments or config
-	checkFailed = 3 // written, but a check failed or not every file of the batch was written
+	checkFailed = 3 // written, but a fixer or check failed or the file was written in part
 )
 
 const usage = `usage:
   catnip show [--hash] [--blame] [-C N] <path>[:<from>-<to> | :<line>[:<column>]]
-  catnip edit <verb>[*N] <target> <text>...      one op from arguments
-  catnip edit < batch                            ops from stdin
+  catnip edit <path> <edit>...
   catnip write <path> < content
 
-verbs: replace <old> <new> | block <start> <end> <new> | before <anchor> <new> | after <anchor> <new>
-target: <path> for text, <path>:<line>#<hash>[-<line>#<hash>] for lines (no text to find)
-batch op:
-  @@@ <verb>[*N] <target>
-  <text to find; none for a line target>
-  @@@ through          (block only)
-  <end anchor>
-  @@@ with             (replace, block) or @@@ insert (before, after)
-  <new text>
-  @@@ end
+edits, any number, all or none applied:
+  --replace OLD NEW [--count N]    replace exact text that occurs N times (default 1)
+  --lines FROM#HASH[-TO#HASH] NEW  replace whole lines; FROM#HASH as catnip show --hash prints it
+  an empty NEW deletes
+
 exit: 0 written and checks passed, 1 nothing written, 2 bad arguments or config,
-  3 written but a fixer or check failed, or the batch was written only in part
-batch text is whole lines: the text to find and the end anchor match at the start of a line;
-edit part of a line with arguments
+  3 written but a fixer or check failed, or the file was written in part
 `
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
@@ -58,7 +50,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "show":
 		return show(args[1:], stdout, stderr)
 	case "edit":
-		return editCmd(args[1:], stdin, stdout, stderr)
+		return editCmd(args[1:], stdout, stderr)
 	case "write":
 		return write(args[1:], stdin, stdout, stderr)
 	case "help", "-h", "--help":
@@ -116,75 +108,40 @@ func show(args []string, stdout, stderr io.Writer) int {
 	return ok
 }
 
-func editCmd(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	var ops []edit.Op
-	if len(args) == 0 {
-		in, err := io.ReadAll(stdin)
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return notApplied
-		}
-		if ops, err = edit.ParseBatch(string(in)); err != nil {
-			fmt.Fprintln(stderr, err)
-			return badUsage
-		}
-	} else {
-		op, err := edit.ParseArgs(args)
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return badUsage
-		}
-		ops = []edit.Op{op}
+func editCmd(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || strings.HasPrefix(args[0], "--") {
+		fmt.Fprint(stderr, "edit needs the file path first\n"+usage)
+		return badUsage
+	}
+	path := args[0]
+	ops, err := edit.ParseArgs(args[1:])
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return badUsage
 	}
 	cfg, err := config.Load(".")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return badUsage
 	}
-	before := map[string][]byte{}
-	var paths []string
-	var infos []os.FileInfo // infos[i] is the file at paths[i]
-ops:
-	for i, op := range ops {
-		info, err := os.Stat(op.File)
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return notApplied
-		}
-		for j, seen := range infos { // other spellings of a read file: ./a, a symlink, another case
-			if os.SameFile(seen, info) {
-				ops[i].File = paths[j]
-				continue ops
-			}
-		}
-		raw, err := os.ReadFile(op.File)
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return notApplied
-		}
-		before[op.File] = raw
-		paths = append(paths, op.File)
-		infos = append(infos, info)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return notApplied
 	}
 	after, fails := edit.Apply(before, ops)
 	if fails != nil {
 		for _, f := range fails {
-			fmt.Fprintln(stderr, f)
+			fmt.Fprintf(stderr, "%s: %s\n", path, f)
 		}
 		fmt.Fprintln(stderr, "nothing written")
 		return notApplied
 	}
-	var changed []string
-	for _, p := range paths {
-		if string(after[p]) != string(before[p]) {
-			changed = append(changed, p)
-		}
-	}
-	if len(changed) == 0 {
+	if string(after) == string(before) {
 		fmt.Fprintln(stdout, "no changes")
 		return ok
 	}
-	return commit(cfg, changed, before, after, stdout, stderr)
+	return commit(cfg, path, before, after, stdout, stderr)
 }
 
 func write(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -211,55 +168,40 @@ func write(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if old != nil {
 		data = edit.Keep(old, data)
 	}
-	return commit(cfg, []string{path}, map[string][]byte{path: old}, map[string][]byte{path: data}, stdout, stderr)
+	return commit(cfg, path, old, data, stdout, stderr)
 }
 
-// commit writes the changed files, prints their diffs and runs their fixers and checks.
-func commit(cfg *config.Config, paths []string, before, after map[string][]byte, stdout, stderr io.Writer) int {
-	for i, p := range paths {
-		if err := store.Write(p, after[p]); err != nil {
-			fmt.Fprintln(stderr, err)
-			written := paths[:i]
-			if errors.Is(err, store.ErrPartial) {
-				written = paths[:i+1]
-			}
-			if len(written) == 0 {
-				fmt.Fprintln(stderr, "nothing written")
-				return notApplied
-			}
-			fmt.Fprintln(stderr, "written: "+strings.Join(written, ", "))
-			if rest := paths[len(written):]; len(rest) > 0 {
-				fmt.Fprintln(stderr, "not written: "+strings.Join(rest, ", "))
-			}
+// commit writes the file, prints its diff and runs its fixers and checks. before is nil for a new file.
+func commit(cfg *config.Config, path string, before, after []byte, stdout, stderr io.Writer) int {
+	if err := store.Write(path, after); err != nil {
+		fmt.Fprintln(stderr, err)
+		if errors.Is(err, store.ErrPartial) {
 			return checkFailed
 		}
-		if before[p] == nil {
-			fmt.Fprintf(stdout, "%s: created, %d lines\n", p, len(edit.Lines(string(after[p]))))
-		} else {
-			fmt.Fprint(stdout, edit.Diff(p, before[p], after[p]))
-		}
+		fmt.Fprintln(stderr, "nothing written")
+		return notApplied
 	}
-	passed, failed := 0, 0
-	for _, p := range paths {
-		fix, checks := cfg.For(p)
-		r, err := check.Run(p, fix, checks)
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return checkFailed
-		}
-		if r.Diff != "" {
-			fmt.Fprintf(stdout, "fixers changed %s:\n%s", p, r.Diff)
-		}
-		for _, f := range r.Failed {
-			fmt.Fprintf(stderr, "FAIL %s\n%s\n", f.Cmd, f.Output)
-		}
-		passed += r.Passed
-		failed += len(r.Failed)
+	if before == nil {
+		fmt.Fprintf(stdout, "%s: created, %d lines\n", path, len(edit.Lines(string(after))))
+	} else {
+		fmt.Fprint(stdout, edit.Diff(path, before, after))
 	}
-	if passed+failed > 0 {
-		fmt.Fprintf(stdout, "checks: %d passed, %d failed\n", passed, failed)
+	fix, checks := cfg.For(path)
+	r, err := check.Run(path, fix, checks)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return checkFailed
 	}
-	if failed > 0 {
+	if r.Diff != "" {
+		fmt.Fprintf(stdout, "fixers changed %s:\n%s", path, r.Diff)
+	}
+	for _, f := range r.Failed {
+		fmt.Fprintf(stderr, "FAIL %s\n%s\n", f.Cmd, f.Output)
+	}
+	if r.Passed+len(r.Failed) > 0 {
+		fmt.Fprintf(stdout, "checks: %d passed, %d failed\n", r.Passed, len(r.Failed))
+	}
+	if len(r.Failed) > 0 {
 		return checkFailed
 	}
 	return ok

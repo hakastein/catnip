@@ -20,22 +20,28 @@ func TestRun(t *testing.T) {
 		code    int
 		after   string
 	}{
-		{name: "edit applied", project: `{"*.txt": {"check": ["true"]}}`, before: "a\n", args: []string{"edit", "replace", "a.txt", "a", "b"}, code: ok, after: "b\n"},
-		{name: "batch applied", project: `{}`, before: "a\n", args: []string{"edit"}, stdin: "@@@ replace a.txt\na\n@@@ with\nc\n@@@ end\n", code: ok, after: "c\n"},
-		{name: "nothing applied", project: `{}`, before: "a\n", args: []string{"edit", "replace", "a.txt", "x", "b"}, code: notApplied, after: "a\n"},
-		{name: "bad arguments", project: `{}`, before: "a\n", args: []string{"edit", "swap", "a.txt", "a", "b"}, code: badUsage, after: "a\n"},
-		{name: "broken config", project: `{`, before: "a\n", args: []string{"edit", "replace", "a.txt", "a", "b"}, code: badUsage, after: "a\n"},
+		{name: "edit applied", project: `{"*.txt": {"check": ["true"]}}`, before: "a\n", args: []string{"edit", "a.txt", "--replace", "a", "b"}, code: ok, after: "b\n"},
+		{
+			name:    "several edits applied",
+			project: `{}`,
+			before:  "one\ntwo\ntwo\n",
+			args:    []string{"edit", "a.txt", "--replace", "one", "1", "--replace", "two", "2", "--count", "2"},
+			code:    ok,
+			after:   "1\n2\n2\n",
+		},
+		{
+			name:    "one edit not found: nothing applied",
+			project: `{}`,
+			before:  "a\n",
+			args:    []string{"edit", "a.txt", "--replace", "a", "b", "--replace", "x", "y"},
+			code:    notApplied,
+			after:   "a\n",
+		},
+		{name: "bad arguments", project: `{}`, before: "a\n", args: []string{"edit", "a.txt", "--before", "a", "b"}, code: badUsage, after: "a\n"},
+		{name: "path missing", project: `{}`, before: "a\n", args: []string{"edit", "--replace", "--replace", "a", "b"}, code: badUsage, after: "a\n"},
+		{name: "broken config", project: `{`, before: "a\n", args: []string{"edit", "a.txt", "--replace", "a", "b"}, code: badUsage, after: "a\n"},
 		{name: "written, check failed", project: `{"*.txt": {"check": ["false"]}}`, before: "a\n", args: []string{"write", "a.txt"}, stdin: "w\n", code: checkFailed, after: "w\n"},
 		{name: "show past the end", project: `{}`, before: "a\n", args: []string{"show", "a.txt:5"}, code: notApplied, after: "a\n"},
-		{
-			name:    "two spellings of one file in a batch edit one file",
-			project: `{}`,
-			before:  "one\ntwo\n",
-			args:    []string{"edit"},
-			stdin:   "@@@ replace a.txt\none\n@@@ with\nONE\n@@@ end\n@@@ replace ./a.txt\ntwo\n@@@ with\nTWO\n@@@ end\n",
-			code:    ok,
-			after:   "ONE\nTWO\n",
-		},
 		{name: "write keeps BOM and CRLF of the file", project: `{}`, before: "\ufeffa\r\n", args: []string{"write", "a.txt"}, stdin: "b\nc\n", code: ok, after: "\ufeffb\r\nc\r\n"},
 		{name: "write keeps a missing final newline", project: `{}`, before: "a", args: []string{"write", "a.txt"}, stdin: "b\n", code: ok, after: "b"},
 	}
@@ -59,23 +65,4 @@ func TestRun(t *testing.T) {
 			assert.Equal(t, tt.after, string(got))
 		})
 	}
-}
-
-func TestEditJoinsSymlinkWithItsTarget(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", home)
-	t.Setenv("HOME", home)
-	t.Setenv("AppData", home)
-	t.Chdir(t.TempDir())
-	require.NoError(t, os.WriteFile("a.txt", []byte("one\ntwo\n"), 0o644))
-	require.NoError(t, os.Symlink("a.txt", "link.txt"))
-	batch := "@@@ replace a.txt\none\n@@@ with\nONE\n@@@ end\n@@@ replace link.txt\ntwo\n@@@ with\nTWO\n@@@ end\n"
-	var stdout, stderr bytes.Buffer
-
-	code := run([]string{"edit"}, strings.NewReader(batch), &stdout, &stderr)
-
-	assert.Equal(t, ok, code, stderr.String())
-	got, err := os.ReadFile("a.txt")
-	require.NoError(t, err)
-	assert.Equal(t, "ONE\nTWO\n", string(got))
 }
