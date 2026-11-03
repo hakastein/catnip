@@ -19,6 +19,8 @@ func TestKeep(t *testing.T) {
 		{"empty old content keeps the input as is", "", "a\r\nb\r\n", "a\r\nb\r\n"},
 		{"empty old content keeps the input BOM", "", "\ufeffx\n", "\ufeffx\n"},
 		{"empty input empties the file", "a\r\n", "", ""},
+		{"empty input empties a file with BOM", "\ufeffa\n", "", ""},
+		{"CRLF input over CRLF keeps a stray CR", "a\r\n", "x\r\r\ny\r\n", "x\r\r\ny\r\n"},
 		{"missing final newline is kept", "same", "same\n", "same"},
 		{"final newline is kept", "a\n", "b", "b\n"},
 	}

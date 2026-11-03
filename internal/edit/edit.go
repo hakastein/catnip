@@ -88,7 +88,7 @@ func (e Encoding) Encode(s string) []byte {
 // Keep gives data the BOM, line terminator style and final newline of the existing content old.
 // An old content without a line break has no terminator style, so data keeps its own.
 func Keep(old, data []byte) []byte {
-	if len(old) == 0 {
+	if len(old) == 0 || len(data) == 0 {
 		return data
 	}
 	oldText, enc := Decode(old)
@@ -96,7 +96,7 @@ func Keep(old, data []byte) []byte {
 	if !strings.Contains(oldText, "\n") {
 		enc.CRLF = own.CRLF
 	}
-	if enc.CRLF {
+	if enc.CRLF && !own.CRLF {
 		text = lf(text) // mixed input: Decode left its CRLF in place
 	}
 	if oldText != "" && text != "" {
@@ -219,7 +219,7 @@ func resolve(text string, op Op) ([]change, string) {
 			}
 			if j < 0 {
 				return nil, fmt.Sprintf("end anchor %s not found after line %d", quote(op.Until), lineOf(text, start)) +
-					similar(text, op.Until, lineOf(text, start))
+					similar(text, op.Until, lineOf(text, end)-1)
 			}
 			end = j + len(op.Until)
 		}

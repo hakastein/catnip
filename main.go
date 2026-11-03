@@ -219,12 +219,16 @@ func commit(cfg *config.Config, paths []string, before, after map[string][]byte,
 	for i, p := range paths {
 		if err := store.Write(p, after[p]); err != nil {
 			fmt.Fprintln(stderr, err)
-			if i == 0 {
+			written := paths[:i]
+			if errors.Is(err, store.ErrPartial) {
+				written = paths[:i+1]
+			}
+			if len(written) == 0 {
 				fmt.Fprintln(stderr, "nothing written")
 				return notApplied
 			}
 			fmt.Fprintf(stderr, "written: %s; not written: %s\n",
-				strings.Join(paths[:i], ", "), strings.Join(paths[i:], ", "))
+				strings.Join(written, ", "), strings.Join(paths[len(written):], ", "))
 			return checkFailed
 		}
 		if before[p] == nil {

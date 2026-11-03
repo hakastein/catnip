@@ -9,11 +9,14 @@ import (
 	"path/filepath"
 )
 
+// ErrPartial marks a failed in-place write: the file may hold part of the new content.
+var ErrPartial = errors.New("file written in part")
+
 // Write replaces path with data through a temporary file and rename in the same directory, so a reader never sees
 // a partial file. An existing file keeps its permissions; a symlink keeps pointing at its target, which is
 // written, and a symlink to a missing file is an error. A new file gets the default mode of the platform, and
 // missing parent directories are created. A file with several hard links is overwritten in place, not atomically,
-// so every link sees the new content.
+// so every link sees the new content; a failure after it was opened is ErrPartial.
 func Write(path string, data []byte) error {
 	switch real, err := filepath.EvalSymlinks(path); {
 	case err == nil:
@@ -30,7 +33,7 @@ func Write(path string, data []byte) error {
 	case err == nil:
 		mode = info.Mode() & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
 		if links(info) > 1 { // a rename would detach the other names of the file from the new content
-			return os.WriteFile(path, data, mode)
+			return overwrite(path, data, mode)
 		}
 	case errors.Is(err, fs.ErrNotExist):
 		mode = newFileMode()
@@ -61,4 +64,23 @@ func Write(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+// overwrite writes data over the file in place and restores mode: writing clears setuid and setgid.
+func overwrite(path string, data []byte, mode fs.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Chmod(mode)
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrPartial, err)
+	}
+	return nil
 }

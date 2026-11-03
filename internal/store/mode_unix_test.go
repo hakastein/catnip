@@ -30,6 +30,7 @@ func TestWriteKeepsHardLinks(t *testing.T) {
 	dir := t.TempDir()
 	path, other := filepath.Join(dir, "a"), filepath.Join(dir, "b")
 	require.NoError(t, os.WriteFile(path, []byte("old"), 0o644))
+	require.NoError(t, os.Chmod(path, 0o750|os.ModeSetgid))
 	require.NoError(t, os.Link(path, other))
 
 	require.NoError(t, store.Write(path, []byte("new")))
@@ -37,6 +38,28 @@ func TestWriteKeepsHardLinks(t *testing.T) {
 	got, err := os.ReadFile(other)
 	require.NoError(t, err)
 	assert.Equal(t, "new", string(got))
+	info, err := os.Stat(other)
+	require.NoError(t, err)
+	assert.Equal(t, 0o750|os.ModeSetgid, info.Mode()&(os.ModePerm|os.ModeSetgid))
+}
+
+func TestWriteRefusesReadOnlyHardLinkedFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes read-only files")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a")
+	require.NoError(t, os.WriteFile(path, []byte("old"), 0o644))
+	require.NoError(t, os.Chmod(path, 0o444))
+	require.NoError(t, os.Link(path, filepath.Join(dir, "b")))
+
+	err := store.Write(path, []byte("new"))
+
+	assert.ErrorIs(t, err, os.ErrPermission)
+	assert.NotErrorIs(t, err, store.ErrPartial)
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "old", string(got))
 }
 
 func TestWriteNewFileUsesUmask(t *testing.T) {
