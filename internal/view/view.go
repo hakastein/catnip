@@ -1,0 +1,122 @@
+// Package view renders file lines with numbers, content hashes and blame.
+package view
+
+import (
+	"bytes"
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/hakastein/catnip/internal/edit"
+)
+
+// Target is what to show: the whole file, lines From..To, or the lines around Line.
+type Target struct {
+	Path     string
+	From, To int // 0, 0 for the whole file
+	Line     int // the asked position; 0 for a range
+}
+
+var suffix = regexp.MustCompile(`^(.+?):(\d+)(?:-(\d+)|:(\d+))?$`)
+
+// ParseTarget reads path, path:from-to, path:line or path:line:column (1-based, as positions in LSP tools print
+// them). A position shows context lines on each side.
+func ParseTarget(s string, context int) (Target, error) {
+	m := suffix.FindStringSubmatch(s)
+	if m == nil {
+		return Target{Path: s}, nil
+	}
+	a, _ := strconv.Atoi(m[2])
+	if a < 1 {
+		return Target{}, fmt.Errorf("%s: lines start at 1", s)
+	}
+	if m[3] != "" {
+		b, _ := strconv.Atoi(m[3])
+		if b < a {
+			return Target{}, fmt.Errorf("%s: range ends before it starts", s)
+		}
+		return Target{Path: m[1], From: a, To: b}, nil
+	}
+	return Target{Path: m[1], From: max(1, a-context), To: a + context, Line: a}, nil
+}
+
+// Render prints the target's lines of decoded text as "<n>[#hash][\t<blame>]\t<line>". blame, when given, holds
+// one annotation per line of the target.
+func Render(text string, t Target, hash bool, blame []string) (string, error) {
+	lines := edit.Lines(text)
+	from, to, err := t.Lines(len(lines))
+	if err != nil {
+		return "", err
+	}
+	width := len(strconv.Itoa(to))
+	var b strings.Builder
+	for n := from; n <= to; n++ {
+		fmt.Fprintf(&b, "%*d", width, n)
+		if hash {
+			b.WriteString("#" + edit.Hash(lines[n-1]))
+		}
+		if blame != nil {
+			b.WriteString("\t" + blame[n-from])
+		}
+		b.WriteString("\t" + lines[n-1] + "\n")
+	}
+	return b.String(), nil
+}
+
+// Lines is the 1-based range of t in a file of n lines. A range or position past the end is an error; the context
+// of a position is cut at the end.
+func (t Target) Lines(n int) (int, int, error) {
+	switch {
+	case t.From == 0:
+		return 1, n, nil
+	case t.Line > n:
+		return 0, 0, fmt.Errorf("line %d is past the end: %s has %d lines", t.Line, t.Path, n)
+	case t.Line == 0 && t.To > n:
+		return 0, 0, fmt.Errorf("line %d is past the end: %s has %d lines", t.To, t.Path, n)
+	}
+	return t.From, min(t.To, n), nil
+}
+
+// Blame annotates lines from..to of path as "<commit> <author> <date>" from git.
+func Blame(path string, from, to int) ([]string, error) {
+	if from > to {
+		return []string{}, nil
+	}
+	cmd := exec.Command("git", "-C", filepath.Dir(path), "blame", "--line-porcelain",
+		"-L", fmt.Sprintf("%d,%d", from, to), "--", filepath.Base(path))
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git blame: %s", strings.TrimSpace(stderr.String()))
+	}
+	type entry struct{ commit, author, date string }
+	var entries []entry
+	var cur entry
+	authorWidth := 0
+	for _, l := range strings.Split(string(out), "\n") {
+		switch {
+		case strings.HasPrefix(l, "\t"):
+			entries = append(entries, cur)
+			authorWidth = max(authorWidth, len([]rune(cur.author)))
+			cur = entry{}
+		case cur.commit == "":
+			cur.commit, _, _ = strings.Cut(l, " ")
+		case strings.HasPrefix(l, "author "):
+			cur.author = strings.TrimPrefix(l, "author ")
+		case strings.HasPrefix(l, "author-time "):
+			sec, _ := strconv.ParseInt(strings.TrimPrefix(l, "author-time "), 10, 64)
+			cur.date = time.Unix(sec, 0).Format(time.DateOnly)
+		}
+	}
+	res := make([]string, len(entries))
+	for i, e := range entries {
+		pad := strings.Repeat(" ", authorWidth-len([]rune(e.author)))
+		res[i] = fmt.Sprintf("%.8s %s%s %s", e.commit, e.author, pad, e.date)
+	}
+	return res, nil
+}
