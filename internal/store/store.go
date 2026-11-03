@@ -75,7 +75,10 @@ func overwrite(path string, data []byte, mode fs.FileMode) error {
 	}
 	_, err = f.Write(data)
 	if err == nil && mode&(fs.ModeSetuid|fs.ModeSetgid) != 0 {
-		err = f.Chmod(mode)
+		var info fs.FileInfo
+		if info, err = f.Stat(); err == nil && info.Mode()&(fs.ModePerm|fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky) != mode {
+			err = f.Chmod(mode)
+		}
 	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
