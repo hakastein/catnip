@@ -58,7 +58,7 @@ func TestRun(t *testing.T) {
 			name:    "fixer diff on request",
 			project: `{"*.txt": {"fix": {"up": "printf 'B\\n' > a.txt"}}}`,
 			before:  "a\n",
-			args:    []string{"write", "--fix-diff", "a.txt"},
+			args:    []string{"write", "--show-fix-diff", "a.txt"},
 			stdin:   "b\n",
 			code:    ok,
 			after:   "B\n",
