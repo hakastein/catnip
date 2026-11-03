@@ -74,6 +74,18 @@ func TestApply(t *testing.T) {
 			fails: fail(0, `not found at the start of a line: "f()"; batch text is whole lines, edit part of a line with arguments: catnip edit replace <path> <old> <new>`),
 		},
 		{
+			name:  "less indentation than the file names the indented line",
+			files: map[string][]byte{"f": []byte("{\n    foo();\n}\n")},
+			ops:   []edit.Op{{File: "f", Old: "  foo();\n", New: "bar();\n", Count: 1, LineStart: true}},
+			fails: fail(0, "not found at the start of a line: \"  foo();\"; batch text is whole lines, edit part of a line with arguments: catnip edit replace <path> <old> <new>; similar lines:\n  2:     foo();"),
+		},
+		{
+			name:  "end anchor that only begins a line names that line first",
+			files: map[string][]byte{"f": []byte("class A {\n    function f()\n    {\n        if (x) {\n        }\n    } // f\n}\n")},
+			ops:   []edit.Op{{File: "f", Old: "    function f()\n", Until: "    }\n", Count: 1, LineStart: true}},
+			fails: fail(0, "end anchor \"    }\" not found after line 2; similar lines:\n  5:         }\n  6:     } // f\n  7: }"),
+		},
+		{
 			name:  "block from start anchor through end anchor",
 			files: map[string][]byte{"f": []byte(src)},
 			ops:   []edit.Op{{File: "f", Old: "func b() {\n", Until: "}\n", New: "func b() {}\n", Count: 1}},
@@ -283,6 +295,7 @@ func TestDiff(t *testing.T) {
 		{"hunk below an inserted line", "a\nb\nc\n", "z\na\nb\nC\n", "f:1\n+\tz\nf:4\n-\tc\n+\tC\n"},
 		{"no change", "a\n", "a\n", ""},
 		{"BOM and CRLF dropped along with a change", "\ufeffa\r\nb\r\n", "a\nB\n", "f:2\n-\tb\n+\tB\nf: BOM removed\nf: line terminators CRLF → LF\n"},
+		{"BOM and CRLF added", "a\n", "\ufeffa\r\n", "f: BOM added\nf: line terminators LF → CRLF\n"},
 		{"final newline only", "a", "a\n", "f: only line terminators changed\n"},
 	}
 	for _, tt := range tests {

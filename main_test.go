@@ -37,6 +37,7 @@ func TestRun(t *testing.T) {
 			after:   "ONE\nTWO\n",
 		},
 		{name: "write keeps BOM and CRLF of the file", project: `{}`, before: "\ufeffa\r\n", args: []string{"write", "a.txt"}, stdin: "b\nc\n", code: ok, after: "\ufeffb\r\nc\r\n"},
+		{name: "write keeps a missing final newline", project: `{}`, before: "a", args: []string{"write", "a.txt"}, stdin: "b\n", code: ok, after: "b"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -58,4 +59,23 @@ func TestRun(t *testing.T) {
 			assert.Equal(t, tt.after, string(got))
 		})
 	}
+}
+
+func TestEditJoinsSymlinkWithItsTarget(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+	t.Setenv("HOME", home)
+	t.Setenv("AppData", home)
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("a.txt", []byte("one\ntwo\n"), 0o644))
+	require.NoError(t, os.Symlink("a.txt", "link.txt"))
+	batch := "@@@ replace a.txt\none\n@@@ with\nONE\n@@@ end\n@@@ replace link.txt\ntwo\n@@@ with\nTWO\n@@@ end\n"
+	var stdout, stderr bytes.Buffer
+
+	code := run([]string{"edit"}, strings.NewReader(batch), &stdout, &stderr)
+
+	assert.Equal(t, ok, code, stderr.String())
+	got, err := os.ReadFile("a.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "ONE\nTWO\n", string(got))
 }

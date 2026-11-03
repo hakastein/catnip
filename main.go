@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/hakastein/catnip/internal/check"
@@ -143,22 +142,21 @@ func editCmd(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return badUsage
 	}
 	before := map[string][]byte{}
-	spelling := map[string]string{} // one physical file → the first path naming it in the batch
 	var paths []string
+	var infos []os.FileInfo // infos[i] is the file at paths[i]
+ops:
 	for i, op := range ops {
-		key := op.File
-		if real, err := filepath.EvalSymlinks(key); err == nil {
-			key = real
-		}
-		if key, err = filepath.Abs(key); err != nil {
+		info, err := os.Stat(op.File)
+		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return notApplied
 		}
-		if p, seen := spelling[key]; seen {
-			ops[i].File = p
-			continue
+		for j, seen := range infos { // other spellings of a read file: ./a, a symlink, another case
+			if os.SameFile(seen, info) {
+				ops[i].File = paths[j]
+				continue ops
+			}
 		}
-		spelling[key] = op.File
 		raw, err := os.ReadFile(op.File)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
@@ -166,6 +164,7 @@ func editCmd(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		before[op.File] = raw
 		paths = append(paths, op.File)
+		infos = append(infos, info)
 	}
 	after, fails := edit.Apply(before, ops)
 	if fails != nil {
@@ -209,10 +208,8 @@ func write(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return notApplied
 	}
-	if old != nil { // an overwrite keeps the file's BOM and line terminators
-		_, enc := edit.Decode(old)
-		text, _ := edit.Decode(data)
-		data = enc.Encode(text)
+	if old != nil {
+		data = edit.Keep(old, data)
 	}
 	return commit(cfg, []string{path}, map[string][]byte{path: old}, map[string][]byte{path: data}, stdout, stderr)
 }

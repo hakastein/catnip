@@ -77,12 +77,29 @@ func lf(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }
 // Encode is the inverse of Decode.
 func (e Encoding) Encode(s string) []byte {
 	if e.CRLF {
-		s = strings.ReplaceAll(s, "\n", "\r\n")
+		s = strings.ReplaceAll(lf(s), "\n", "\r\n")
 	}
 	if e.BOM {
 		s = bom + s
 	}
 	return []byte(s)
+}
+
+// Keep gives data the BOM, line terminator style and final newline of the existing content old.
+// An old content without a line break has no terminator style, so data keeps its own.
+func Keep(old, data []byte) []byte {
+	oldText, enc := Decode(old)
+	text, own := Decode(data)
+	if !strings.Contains(oldText, "\n") {
+		enc.CRLF = own.CRLF
+	}
+	if oldText != "" {
+		text = strings.TrimSuffix(text, "\n")
+		if strings.HasSuffix(oldText, "\n") {
+			text += "\n"
+		}
+	}
+	return enc.Encode(text)
 }
 
 // Lines splits decoded text into lines without terminators.
@@ -205,7 +222,8 @@ func resolve(text string, op Op) ([]change, string) {
 	}
 	if len(cs) == 0 && op.LineStart && strings.Contains(text, op.Old) {
 		return nil, "not found at the start of a line: " + quote(op.Old) +
-			"; batch text is whole lines, edit part of a line with arguments: catnip edit replace <path> <old> <new>"
+			"; batch text is whole lines, edit part of a line with arguments: catnip edit replace <path> <old> <new>" +
+			similar(text, op.Old)
 	}
 	if len(cs) == 0 {
 		return nil, "not found: " + quote(op.Old) + diagnose(text, op.Old)
@@ -331,11 +349,12 @@ func diagnose(text, needle string) string {
 		bestAt+1, n-1, best, n, lines[n-1])
 }
 
-// similar lists up to three lines most like the first non-blank line of needle, ignoring indentation.
+// similar lists up to three lines most like the first non-blank line of needle, ignoring indentation. Lines that
+// begin with that line exactly, indentation included, come first: they only have more text after it.
 func similar(text, needle string) string {
-	var probe string
+	var raw, probe string
 	for _, l := range strings.Split(needle, "\n") {
-		if probe = strings.TrimSpace(l); probe != "" {
+		if raw, probe = l, strings.TrimSpace(l); probe != "" {
 			break
 		}
 	}
@@ -350,6 +369,10 @@ func similar(text, needle string) string {
 	m := difflib.NewMatcher(nil, strings.Split(probe, ""))
 	lines := Lines(text)
 	for i, l := range lines {
+		if strings.HasPrefix(l, raw) {
+			hits = append(hits, hit{i + 1, 2})
+			continue
+		}
 		m.SetSeq1(strings.Split(strings.TrimSpace(l), ""))
 		if s := m.Ratio(); s >= 0.75 {
 			hits = append(hits, hit{i + 1, s})
