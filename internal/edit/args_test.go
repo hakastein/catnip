@@ -37,6 +37,11 @@ func TestParseArgs(t *testing.T) {
 		{name: "bad count", args: []string{"--replace", "a", "b", "--count", "0"}, err: `--count: bad number "0"`},
 		{name: "count not after replace", args: []string{"--lines", "1#0000", "x", "--count", "2"}, err: "--count goes right after a --replace"},
 		{name: "bad line range", args: []string{"--lines", "1-2", "x"}, err: `--lines: "1-2" is not FROM#HASH[-TO#HASH] as catnip show --hash prints it`},
+		{name: "text before the line number", args: []string{"--lines", "x1#0000", "x"}, err: `--lines: "x1#0000" is not FROM#HASH[-TO#HASH] as catnip show --hash prints it`},
+		{name: "hash too long", args: []string{"--lines", "1#00000", "x"}, err: `--lines: "1#00000" is not FROM#HASH[-TO#HASH] as catnip show --hash prints it`},
+		{name: "line zero", args: []string{"--lines", "0#0000", "x"}, err: `--lines: "0#0000": lines start at 1 and the range ends after it starts`},
+		{name: "reversed range", args: []string{"--lines", "3#0000-1#0000", "x"}, err: `--lines: "3#0000-1#0000": lines start at 1 and the range ends after it starts`},
+		{name: "line number too big", args: []string{"--lines", "99999999999999999999#0000", "x"}, err: `--lines: strconv.Atoi: parsing "99999999999999999999": value out of range`},
 		{name: "lines without new", args: []string{"--lines", "1#0000"}, err: "--lines needs FROM#HASH[-TO#HASH] and NEW"},
 		{name: "unknown argument", args: []string{"--before", "a", "b"}, err: `unexpected "--before": want --replace or --lines`},
 	}

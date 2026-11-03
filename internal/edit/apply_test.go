@@ -123,6 +123,52 @@ func TestApply(t *testing.T) {
 			},
 		},
 		{
+			name: "edits out of file order and adjacent both apply",
+			file: "a\nb\nc\n",
+			ops: []edit.Op{
+				{Lines: lines(2, "b", 2, "b"), New: "B"},
+				{Old: "a\n", New: "A\n", Count: 1},
+			},
+			want: "A\nB\nc\n",
+		},
+		{
+			name: "failures are reported in edit order",
+			file: "abc\n",
+			ops: []edit.Op{
+				{Old: "bc", New: "x", Count: 1},
+				{Old: "ab", New: "y", Count: 1},
+				{Old: "nope", New: "z", Count: 1},
+			},
+			fails: []edit.Failure{{Op: 0, Reason: "overlaps edit 2"}, {Op: 2, Reason: `not found: "nope"`}},
+		},
+		{
+			name: "an overlapping counted edit is reported once",
+			file: "xaxa\n",
+			ops: []edit.Op{
+				{Lines: lines(1, "xaxa", 1, "xaxa"), New: "y"},
+				{Old: "a", New: "b", Count: 2},
+			},
+			fails: fail(1, "overlaps edit 1"),
+		},
+		{
+			name:  "short text not found names the line holding its longest prefix",
+			file:  "func f() {\n    return $a->renamed(20);\n}\n",
+			ops:   []edit.Op{{Old: "renamed(200)", New: "renamed(30)", Count: 1}},
+			fails: fail(0, "not found: \"renamed(200)\"; similar lines:\n  2:     return $a->renamed(20);"),
+		},
+		{
+			name:  "CRLF text does not match an LF line of a mixed file",
+			file:  "a\r\nb\nc\r\n",
+			ops:   []edit.Op{{Old: "b\r\n", New: "B\r\n", Count: 1}},
+			fails: fail(0, "not found: \"b\\r\"; similar lines:\n  2: b"),
+		},
+		{
+			name: "deleting an unterminated last line keeps the file unterminated",
+			file: "a\nb",
+			ops:  []edit.Op{{Lines: lines(2, "b", 2, "b")}},
+			want: "a",
+		},
+		{
 			name: "every edit resolves against the original content",
 			file: "a\nb\nc\n",
 			ops: []edit.Op{

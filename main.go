@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"strings"
 
 	"github.com/hakastein/catnip/internal/check"
 	"github.com/hakastein/catnip/internal/config"
@@ -108,8 +109,8 @@ func show(args []string, stdout, stderr io.Writer) int {
 }
 
 func editCmd(args []string, stdout, stderr io.Writer) int {
-	if len(args) < 2 {
-		fmt.Fprint(stderr, usage)
+	if len(args) == 0 || strings.HasPrefix(args[0], "--") {
+		fmt.Fprint(stderr, "edit needs the file path first\n"+usage)
 		return badUsage
 	}
 	path := args[0]

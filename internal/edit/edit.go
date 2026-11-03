@@ -21,7 +21,7 @@ type Op struct {
 	New   string
 }
 
-// LineRange is lines From..To (1-based, inclusive), each end checked against its Hash.
+// LineRange is lines From..To (1-based, From <= To), each end checked against its Hash.
 type LineRange struct {
 	From, To         int
 	FromHash, ToHash string
@@ -136,7 +136,10 @@ func Apply(raw []byte, ops []Op) ([]byte, []Failure) {
 	pos, owner := 0, -1
 	for _, c := range changes {
 		if c.start < pos {
-			fails = append(fails, Failure{c.op, fmt.Sprintf("overlaps edit %d", owner+1)})
+			f := Failure{c.op, fmt.Sprintf("overlaps edit %d", owner+1)}
+			if n := len(fails); n == 0 || fails[n-1] != f { // every match of a --count edit overlaps alike
+				fails = append(fails, f)
+			}
 			continue
 		}
 		b.WriteString(text[pos:c.start])
@@ -185,9 +188,6 @@ func resolve(text string, op Op) ([]change, string) {
 func resolveLines(text string, op Op) ([]change, string) {
 	r := *op.Lines
 	lines := Lines(text)
-	if r.From < 1 || r.To < r.From {
-		return nil, fmt.Sprintf("bad line range %d-%d", r.From, r.To)
-	}
 	if r.To > len(lines) {
 		return nil, fmt.Sprintf("line %d is past the end: the file has %d lines", r.To, len(lines))
 	}
@@ -207,12 +207,18 @@ func resolveLines(text string, op Op) ([]change, string) {
 	for _, l := range lines[r.From-1 : r.To] {
 		end += len(l) + 1
 	}
-	// New text is whole lines: it ends with a terminator unless it replaces an unterminated last line.
+	// New text is whole lines: it ends with a terminator unless it replaces an unterminated last line, and deleting
+	// that line takes the terminator before it, so the file still ends without one.
 	newText := strings.TrimSuffix(op.New, "\n")
-	if end > len(text) {
+	switch {
+	case end <= len(text):
+		if op.New != "" {
+			newText += "\n"
+		}
+	case op.New == "" && start > 0:
+		start, end = start-1, len(text)
+	default:
 		end = len(text)
-	} else if op.New != "" {
-		newText += "\n"
 	}
 	return []change{{start: start, end: end, text: newText}}, ""
 }
@@ -282,6 +288,16 @@ func similar(text, needle string) string {
 		}
 	}
 	sort.SliceStable(hits, func(a, b int) bool { return hits[a].score > hits[b].score })
+	if len(hits) == 0 { // a short text: look for lines holding its longest prefix
+		r := []rune(probe)
+		for k := len(r) - 1; k >= max(4, len(r)/2) && len(hits) == 0; k-- {
+			for i, l := range lines {
+				if strings.Contains(l, string(r[:k])) {
+					hits = append(hits, hit{i + 1, 0})
+				}
+			}
+		}
+	}
 	if len(hits) > 3 {
 		hits = hits[:3]
 	}
