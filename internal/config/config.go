@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -15,11 +16,16 @@ import (
 	"strings"
 )
 
-// Rule is what runs on a file matching a glob: Fix commands may change the file, Check commands must not.
-// "{file}" in a command is replaced by the file path.
+// Rule is what runs on a file matching a glob: Fix commands may change the file, Check commands, keyed by the name
+// catnip reports them under, must not. "{file}" in a command is replaced by the file path.
 type Rule struct {
-	Fix   []string `json:"fix"`
-	Check []string `json:"check"`
+	Fix   []string          `json:"fix"`
+	Check map[string]string `json:"check"`
+}
+
+// Check is a named check command.
+type Check struct {
+	Name, Cmd string
 }
 
 // Config is the merged project and global configuration.
@@ -65,10 +71,13 @@ func Load(dir string) (*Config, error) {
 			if _, err := path.Match(glob, ""); err != nil {
 				return nil, fmt.Errorf("%s: glob %q: %w", p, glob, err)
 			}
-			for _, cmd := range slices.Concat(r.Fix, r.Check) {
+			for _, cmd := range slices.Concat(r.Fix, slices.Collect(maps.Values(r.Check))) {
 				if strings.TrimSpace(cmd) == "" {
 					return nil, fmt.Errorf("%s: glob %q: empty or null command", p, glob)
 				}
+			}
+			if _, ok := r.Check[""]; ok {
+				return nil, fmt.Errorf("%s: glob %q: empty check name", p, glob)
 			}
 			c.rules[glob] = r
 		}
@@ -76,8 +85,8 @@ func Load(dir string) (*Config, error) {
 	return c, nil
 }
 
-// For lists the fixers and checks for file, in glob order, with "{file}" filled in.
-func (c *Config) For(file string) (fix, check []string) {
+// For lists the fixers and checks for file, in glob order and checks of one glob by name, with "{file}" filled in.
+func (c *Config) For(file string) (fix []string, check []Check) {
 	name := filepath.Base(file)
 	rel := ""
 	if abs, err := filepath.Abs(file); err == nil && c.Root != "" {
@@ -104,8 +113,8 @@ func (c *Config) For(file string) (fix, check []string) {
 		for _, cmd := range c.rules[g].Fix {
 			fix = append(fix, strings.ReplaceAll(cmd, "{file}", quoted))
 		}
-		for _, cmd := range c.rules[g].Check {
-			check = append(check, strings.ReplaceAll(cmd, "{file}", quoted))
+		for _, name := range slices.Sorted(maps.Keys(c.rules[g].Check)) {
+			check = append(check, Check{name, strings.ReplaceAll(c.rules[g].Check[name], "{file}", quoted)})
 		}
 	}
 	return fix, check

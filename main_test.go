@@ -20,7 +20,7 @@ func TestRun(t *testing.T) {
 		code    int
 		after   string
 	}{
-		{name: "edit applied", project: `{"*.txt": {"check": ["true"]}}`, before: "a\n", args: []string{"edit", "a.txt", "--replace", "a", "b"}, code: ok, after: "b\n"},
+		{name: "edit applied", project: `{"*.txt": {"check": {"ok": "true"}}}`, before: "a\n", args: []string{"edit", "a.txt", "--replace", "a", "b"}, code: ok, after: "b\n"},
 		{
 			name:    "several edits applied",
 			project: `{}`,
@@ -40,7 +40,7 @@ func TestRun(t *testing.T) {
 		{name: "bad arguments", project: `{}`, before: "a\n", args: []string{"edit", "a.txt", "--before", "a", "b"}, code: badUsage, after: "a\n"},
 		{name: "path missing", project: `{}`, before: "a\n", args: []string{"edit", "--replace", "--replace", "a", "b"}, code: badUsage, after: "a\n"},
 		{name: "broken config", project: `{`, before: "a\n", args: []string{"edit", "a.txt", "--replace", "a", "b"}, code: badUsage, after: "a\n"},
-		{name: "written, check failed", project: `{"*.txt": {"check": ["false"]}}`, before: "a\n", args: []string{"write", "a.txt"}, stdin: "w\n", code: checkFailed, after: "w\n"},
+		{name: "written, check failed", project: `{"*.txt": {"check": {"no": "false"}}}`, before: "a\n", args: []string{"write", "a.txt"}, stdin: "w\n", code: checkFailed, after: "w\n"},
 		{name: "show past the end", project: `{}`, before: "a\n", args: []string{"show", "a.txt:5"}, code: notApplied, after: "a\n"},
 		{name: "write keeps BOM and CRLF of the file", project: `{}`, before: "\ufeffa\r\n", args: []string{"write", "a.txt"}, stdin: "b\nc\n", code: ok, after: "\ufeffb\r\nc\r\n"},
 		{name: "write keeps a missing final newline", project: `{}`, before: "a", args: []string{"write", "a.txt"}, stdin: "b\n", code: ok, after: "b"},

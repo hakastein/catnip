@@ -196,10 +196,10 @@ func commit(cfg *config.Config, path string, before, after []byte, stdout, stder
 		fmt.Fprintf(stdout, "fixers changed %s:\n%s", path, r.Diff)
 	}
 	for _, f := range r.Failed {
-		fmt.Fprintf(stderr, "FAIL %s\n%s\n", f.Cmd, f.Output)
+		fmt.Fprintf(stderr, "%s: failed\n%s\n", f.Name, f.Output)
 	}
-	if len(checks) > 0 {
-		fmt.Fprintf(stdout, "checks: %d of %d passed\n", r.Passed, len(checks))
+	for _, name := range r.Passed {
+		fmt.Fprintf(stdout, "%s: passed\n", name)
 	}
 	if len(r.Failed) > 0 {
 		return checkFailed

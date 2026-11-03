@@ -9,34 +9,40 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hakastein/catnip/internal/check"
+	"github.com/hakastein/catnip/internal/config"
 )
 
 func TestRun(t *testing.T) {
 	tests := []struct {
 		name  string
 		fix   []string
-		check []string
+		check []config.Check
 		want  check.Result
 		file  string
 	}{
-		{name: "passing checks", check: []string{"true", "grep -q a f"}, want: check.Result{Passed: 2}, file: "a\n"},
+		{
+			name:  "passing checks are named",
+			check: []config.Check{{Name: "t", Cmd: "true"}, {Name: "has a", Cmd: "grep -q a f"}},
+			want:  check.Result{Passed: []string{"t", "has a"}},
+			file:  "a\n",
+		},
 		{
 			name:  "failing check keeps its output",
-			check: []string{"echo broken; exit 4"},
-			want:  check.Result{Failed: []check.Failure{{Cmd: "echo broken; exit 4", Output: "broken\nexit status 4"}}},
+			check: []config.Check{{Name: "broken", Cmd: "echo broken; exit 4"}},
+			want:  check.Result{Failed: []check.Failure{{Name: "broken", Output: "broken\nexit status 4"}}},
 			file:  "a\n",
 		},
 		{
 			name:  "fixer change shows as a diff before checks run",
 			fix:   []string{"printf 'A\\n' > f"},
-			check: []string{"grep -q A f"},
-			want:  check.Result{Diff: "f:1\n-\ta\n+\tA\n", Passed: 1},
+			check: []config.Check{{Name: "has A", Cmd: "grep -q A f"}},
+			want:  check.Result{Diff: "f:1\n-\ta\n+\tA\n", Passed: []string{"has A"}},
 			file:  "A\n",
 		},
 		{
 			name: "failing fixer",
 			fix:  []string{"exit 1"},
-			want: check.Result{Failed: []check.Failure{{Cmd: "exit 1", Output: "exit status 1"}}},
+			want: check.Result{Failed: []check.Failure{{Name: "exit 1", Output: "exit status 1"}}},
 			file: "a\n",
 		},
 	}
