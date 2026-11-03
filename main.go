@@ -227,8 +227,10 @@ func commit(cfg *config.Config, paths []string, before, after map[string][]byte,
 				fmt.Fprintln(stderr, "nothing written")
 				return notApplied
 			}
-			fmt.Fprintf(stderr, "written: %s; not written: %s\n",
-				strings.Join(written, ", "), strings.Join(paths[len(written):], ", "))
+			fmt.Fprintln(stderr, "written: "+strings.Join(written, ", "))
+			if rest := paths[len(written):]; len(rest) > 0 {
+				fmt.Fprintln(stderr, "not written: "+strings.Join(rest, ", "))
+			}
 			return checkFailed
 		}
 		if before[p] == nil {

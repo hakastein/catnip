@@ -219,7 +219,7 @@ func resolve(text string, op Op) ([]change, string) {
 			}
 			if j < 0 {
 				return nil, fmt.Sprintf("end anchor %s not found after line %d", quote(op.Until), lineOf(text, start)) +
-					similar(text, op.Until, lineOf(text, end)-1)
+					similar(text, op.Until, lineOf(text, end-1))
 			}
 			end = j + len(op.Until)
 		}

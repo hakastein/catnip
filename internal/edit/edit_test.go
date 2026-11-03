@@ -86,6 +86,18 @@ func TestApply(t *testing.T) {
 			fails: fail(0, "end anchor \"    }\" not found after line 3; similar lines:\n  6:         }\n  8:         }\n  11:     } // f"),
 		},
 		{
+			name:  "end anchor suggestions start after a multi-line start anchor",
+			files: map[string][]byte{"f": []byte("function f()\n    } // g\n{\n    body\n}\n")},
+			ops:   []edit.Op{{File: "f", Old: "function f()\n    } // g\n", Until: "    } // f\n", Count: 1, LineStart: true}},
+			fails: fail(0, `end anchor "    } // f" not found after line 1`),
+		},
+		{
+			name:  "end anchor suggestions skip the line of a start anchor inside it",
+			files: map[string][]byte{"f": []byte("x = 1\ny\n")},
+			ops:   []edit.Op{{File: "f", Old: "x", Until: "x = 2", New: "Z", Count: 1}},
+			fails: fail(0, `end anchor "x = 2" not found after line 1`),
+		},
+		{
 			name:  "CRLF file keeps a stray CR in an untouched line",
 			files: map[string][]byte{"f": []byte("a\r\r\nb\r\n")},
 			ops:   []edit.Op{{File: "f", Old: "b", New: "B", Count: 1}},

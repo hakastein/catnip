@@ -66,14 +66,15 @@ func Write(path string, data []byte) error {
 	return os.Rename(tmp.Name(), path)
 }
 
-// overwrite writes data over the file in place and restores mode: writing clears setuid and setgid.
+// overwrite writes data over the file in place and restores setuid and setgid, which a write clears; only the
+// owner may restore them, so other bits are left alone.
 func overwrite(path string, data []byte, mode fs.FileMode) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {
 		return err
 	}
 	_, err = f.Write(data)
-	if err == nil {
+	if err == nil && mode&(fs.ModeSetuid|fs.ModeSetgid) != 0 {
 		err = f.Chmod(mode)
 	}
 	if cerr := f.Close(); err == nil {
