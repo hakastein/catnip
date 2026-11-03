@@ -198,8 +198,8 @@ func commit(cfg *config.Config, path string, before, after []byte, stdout, stder
 	for _, f := range r.Failed {
 		fmt.Fprintf(stderr, "FAIL %s\n%s\n", f.Cmd, f.Output)
 	}
-	if r.Passed+len(r.Failed) > 0 {
-		fmt.Fprintf(stdout, "checks: %d passed, %d failed\n", r.Passed, len(r.Failed))
+	if len(checks) > 0 {
+		fmt.Fprintf(stdout, "checks: %d of %d passed\n", r.Passed, len(checks))
 	}
 	if len(r.Failed) > 0 {
 		return checkFailed

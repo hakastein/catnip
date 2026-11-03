@@ -18,7 +18,8 @@ type Failure struct {
 // Result of the commands on one file.
 type Result struct {
 	// Diff is what the fixers changed.
-	Diff   string
+	Diff string
+	// Failed holds the fixers and checks that failed; Passed counts the checks that passed.
 	Failed []Failure
 	Passed int
 }
@@ -41,12 +42,14 @@ func Run(file string, fix, check []string) (Result, error) {
 		r.Diff = edit.Diff(file, before, after)
 	}
 	for _, cmd := range check {
-		r.run(cmd)
+		if r.run(cmd) {
+			r.Passed++
+		}
 	}
 	return r, nil
 }
 
-func (r *Result) run(cmd string) {
+func (r *Result) run(cmd string) bool {
 	out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
 	if err != nil {
 		msg := strings.TrimRight(string(out), "\n")
@@ -54,7 +57,7 @@ func (r *Result) run(cmd string) {
 			msg += "\n"
 		}
 		r.Failed = append(r.Failed, Failure{cmd, msg + err.Error()})
-		return
+		return false
 	}
-	r.Passed++
+	return true
 }

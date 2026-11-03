@@ -26,7 +26,7 @@ git-репозитория текущего каталога.
 
 ```json
 {
-  "*.go": {"fix": ["gofmt -w {file}"], "check": ["go vet {file}"]},
+  "*.go": {"fix": ["goimports -w {file}"], "check": ["cd \"$(dirname {file})\" && go vet ."]},
   "*.php": {"check": ["php -l {file}"]},
   "src/legacy/*.php": {}
 }
