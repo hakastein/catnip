@@ -3,7 +3,6 @@ package store_test
 import (
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,35 +11,29 @@ import (
 	"github.com/hakastein/catnip/internal/store"
 )
 
-func TestWriteKeepsMode(t *testing.T) {
+func TestWriteReplacesBytesAndLeavesNoTemporaryFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "run.sh")
-	require.NoError(t, os.WriteFile(path, []byte("old"), 0o750))
-	require.NoError(t, os.Chmod(path, 0o750))
+	path := filepath.Join(dir, "a.txt")
+	require.NoError(t, os.WriteFile(path, []byte("old"), 0o644))
 
-	require.NoError(t, store.Write(path, []byte("new\r\n")))
+	require.NoError(t, store.Write(path, []byte("\ufeffnew\r\n")))
 
 	got, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Equal(t, "new\r\n", string(got))
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o750), info.Mode().Perm())
+	assert.Equal(t, "\ufeffnew\r\n", string(got))
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
-	assert.Len(t, entries, 1, "no temporary file is left")
+	assert.Len(t, entries, 1)
 }
 
-func TestWriteNewFileUsesUmask(t *testing.T) {
-	old := syscall.Umask(0o027)
-	t.Cleanup(func() { syscall.Umask(old) })
+func TestWriteCreatesParentDirectories(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "new", "dir", "a.go")
 
 	require.NoError(t, store.Write(path, []byte("x")))
 
-	info, err := os.Stat(path)
+	got, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o640), info.Mode().Perm())
+	assert.Equal(t, "x", string(got))
 }
 
 func TestWriteThroughSymlink(t *testing.T) {

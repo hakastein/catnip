@@ -17,9 +17,11 @@ const global = `{"*.php": {"check": ["php -l {file}"]}, "*.go": {"fix": ["gofmt 
 // directory; the working directory stays at the repository root.
 func load(t *testing.T, project string) (*config.Config, error) {
 	home, repo := t.TempDir(), t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", home)
-	require.NoError(t, os.MkdirAll(filepath.Join(home, "catnip"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(home, "catnip", "config.json"), []byte(global), 0o644))
+	isolateUserConfig(t, home)
+	dir, err := os.UserConfigDir()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "catnip"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "catnip", "config.json"), []byte(global), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(repo, "src"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(repo, config.ProjectFile), []byte(project), 0o644))
@@ -27,6 +29,13 @@ func load(t *testing.T, project string) (*config.Config, error) {
 	c, err := config.Load(".")
 	t.Chdir(repo)
 	return c, err
+}
+
+// isolateUserConfig points the user config directory of every platform into dir.
+func isolateUserConfig(t *testing.T, dir string) {
+	t.Setenv("XDG_CONFIG_HOME", dir) // Linux
+	t.Setenv("HOME", dir)            // macOS: $HOME/Library/Application Support
+	t.Setenv("AppData", dir)         // Windows
 }
 
 func TestFor(t *testing.T) {

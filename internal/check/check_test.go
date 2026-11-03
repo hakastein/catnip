@@ -28,7 +28,7 @@ func TestRun(t *testing.T) {
 		},
 		{
 			name:  "fixer change shows as a diff before checks run",
-			fix:   []string{"sed -i s/a/A/ f"},
+			fix:   []string{"printf 'A\\n' > f"},
 			check: []string{"grep -q A f"},
 			want:  check.Result{Diff: "f:1\n-\ta\n+\tA\n", Passed: 2},
 			file:  "A\n",

@@ -14,12 +14,14 @@ make build                                   # bin/catnip, статически�
 install -m 755 bin/catnip ~/.local/bin/catnip
 ```
 
-Скилл `skills/catnip/SKILL.md` копируется в каталог скиллов харнесса. Сборка — для Unix.
+Скилл `skills/catnip/SKILL.md` копируется в каталог скиллов харнесса. Сборка — Linux, macOS, Windows (`bin/catnip.exe`:
+`GOOS=windows make build`). Фиксеры и проверки идут через `sh`, на Windows — из Git for Windows в `PATH`.
 
 ## Конфиг
 
-Глобальный — `$XDG_CONFIG_HOME/catnip/config.json` (обычно `~/.config/catnip/config.json`), проектный —
-`.catnip.json` в корне git-репозитория текущего каталога.
+Глобальный — `catnip/config.json` в каталоге конфигов пользователя: `$XDG_CONFIG_HOME` или `~/.config` на Linux,
+`~/Library/Application Support` на macOS, `%AppData%` на Windows. Проектный — `.catnip.json` в корне
+git-репозитория текущего каталога.
 
 ```json
 {
@@ -47,7 +49,8 @@ install -m 755 bin/catnip ~/.local/bin/catnip
 
 ## Ограничения
 
-- Каждый файл пишется атомарно (временный файл и rename, права и цель симлинка сохраняются), но пакет из
+- Каждый файл пишется атомарно (временный файл и rename, права и цель симлинка сохраняются; на Windows из прав
+  сохраняется только атрибут «только для чтения»), но пакет из
   нескольких файлов — нет: сбой записи между файлами оставляет часть записанной, catnip перечисляет записанные и
   выходит с кодом 3.
 - В пакете текст не может содержать строку, начинающуюся с `@@@ `.

@@ -29,7 +29,10 @@ func TestExitCodes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			home := t.TempDir()
+			t.Setenv("XDG_CONFIG_HOME", home)
+			t.Setenv("HOME", home)
+			t.Setenv("AppData", home)
 			t.Chdir(t.TempDir())
 			require.NoError(t, os.Mkdir(".git", 0o755))
 			require.NoError(t, os.WriteFile(".catnip.json", []byte(tt.project), 0o644))

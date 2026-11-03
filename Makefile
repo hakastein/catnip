@@ -6,4 +6,4 @@ go:
 	CGO_ENABLED=0 go test $(TESTFLAGS) ./...
 
 build:
-	CGO_ENABLED=0 go build -o bin/catnip .
+	CGO_ENABLED=0 go build -o bin/ .

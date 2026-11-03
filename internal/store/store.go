@@ -1,5 +1,3 @@
-//go:build unix
-
 // Package store writes files atomically.
 package store
 
@@ -8,12 +6,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"syscall"
 )
 
 // Write replaces path with data through a temporary file and rename in the same directory, so a reader never sees
 // a partial file. An existing file keeps its permissions; a symlink keeps pointing at its target, which is
-// written. A new file gets 0666 minus the umask, and missing parent directories are created.
+// written. A new file gets the default mode of the platform, and missing parent directories are created.
 func Write(path string, data []byte) error {
 	if real, err := filepath.EvalSymlinks(path); err == nil {
 		path = real
@@ -25,9 +22,7 @@ func Write(path string, data []byte) error {
 	case err == nil:
 		mode = info.Mode().Perm()
 	case errors.Is(err, fs.ErrNotExist):
-		mask := syscall.Umask(0)
-		syscall.Umask(mask)
-		mode = 0o666 &^ fs.FileMode(mask)
+		mode = newFileMode()
 		if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
 			return err
 		}
