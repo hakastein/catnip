@@ -1,5 +1,8 @@
 # catnip
 
+[![ci](https://github.com/hakastein/catnip/actions/workflows/ci.yml/badge.svg)](https://github.com/hakastein/catnip/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/hakastein/catnip)](https://github.com/hakastein/catnip/releases/latest)
+
 CLI для агентов: просмотр и правка файлов, сцепляемые в bash. `catnip show` печатает файл, диапазон или окрестность
 позиции с номерами строк; `catnip edit` применяет к файлу несколько точных замен разом и сначала проверяет все, так
 что несошедшаяся замена не записывает ничего; `catnip write` создаёт файл из stdin. После записи catnip запускает
@@ -9,14 +12,25 @@ CLI для агентов: просмотр и правка файлов, сце
 
 ## Установка
 
+Бинарник — из [последнего релиза](https://github.com/hakastein/catnip/releases/latest): `catnip-<os>-<arch>` для
+`linux`, `darwin`, `windows` (`.exe`) на `amd64` и `arm64`, суммы — в `sha256sums.txt`.
+
+```bash
+curl -fLo ~/.local/bin/catnip https://github.com/hakastein/catnip/releases/latest/download/catnip-linux-amd64
+chmod +x ~/.local/bin/catnip
+```
+
+На macOS скачанный бинарник не подписан: `xattr -d com.apple.quarantine catnip` снимает карантин.
+
+Из исходников (Go из `go.mod`):
+
 ```bash
 make build                                   # bin/catnip, статический, без CGO
 install -m 755 bin/catnip ~/.local/bin/catnip
 ```
 
-Скилл `skills/catnip/SKILL.md` копируется в каталог скиллов харнесса. Сборка — Linux, macOS, Windows
-(`bin/catnip.exe`: `GOOS=windows make build`). Фиксеры и проверки идут через `sh`, на Windows — из Git for Windows в
-`PATH`.
+Скилл `skills/catnip/SKILL.md` копируется в каталог скиллов агента. Фиксеры и проверки идут через `sh`, на
+Windows — из Git for Windows в `PATH`.
 
 ## Конфиг
 
@@ -65,3 +79,8 @@ install -m 755 bin/catnip ~/.local/bin/catnip
   из прав есть только атрибут «только для чтения».
 - CRLF понимается, только если им кончается каждая строка файла; в файле со смешанными окончаниями текст с `\n`
   совпадает лишь с LF-строками.
+
+## Участие и лицензия
+
+Как предложить изменение — [CONTRIBUTING.md](CONTRIBUTING.md), история выпусков — [CHANGELOG.md](CHANGELOG.md).
+Лицензия — [MIT](LICENSE).
