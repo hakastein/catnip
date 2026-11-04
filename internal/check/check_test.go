@@ -41,9 +41,9 @@ func TestRun(t *testing.T) {
 			},
 			check: []config.Command{{Name: "has A", Cmd: "grep -q A f"}},
 			want: []check.Outcome{
-				{Name: "upper", Diff: "f:1\n-\ta\n+\tA\n"},
+				{Name: "upper", Diff: "p/f:1\n-\ta\n+\tA\n"},
 				{Name: "noop"},
-				{Name: "twice", Diff: "f:2\n+\tA\n"},
+				{Name: "twice", Diff: "p/f:2\n+\tA\n"},
 				{Name: "has A"},
 			},
 			file: "A\nA\n",
@@ -51,20 +51,21 @@ func TestRun(t *testing.T) {
 		{
 			name: "failing fixer keeps what it changed",
 			fix:  []config.Command{{Name: "half", Cmd: "printf 'b\\n' > f; exit 1"}},
-			want: []check.Outcome{{Name: "half", Failed: "exit status 1", Diff: "f:1\n-\ta\n+\tb\n"}},
+			want: []check.Outcome{{Name: "half", Failed: "exit status 1", Diff: "p/f:1\n-\ta\n+\tb\n"}},
 			file: "b\n",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
-			require.NoError(t, os.WriteFile("f", []byte("a\n"), 0o644))
+			require.NoError(t, os.Mkdir("p", 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join("p", "f"), []byte("a\n"), 0o644))
 
-			got, err := check.Run("f", tt.fix, tt.check)
+			got, err := check.Run("p", "p/f", tt.fix, tt.check) // commands name the file from p, where they run
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
-			content, err := os.ReadFile(filepath.Join(".", "f"))
+			content, err := os.ReadFile(filepath.Join("p", "f"))
 			require.NoError(t, err)
 			assert.Equal(t, tt.file, string(content))
 		})

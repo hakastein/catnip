@@ -13,8 +13,8 @@ import (
 
 const global = `{"*.php": {"check": {"php lint": "php -l {file}"}}, "*.go": {"fix": {"gofmt": "gofmt -w {file}"}, "check": {"go vet": "go vet ."}}}`
 
-// load writes the global config and a project config into a fresh repository and loads them from its src
-// directory; the working directory stays at the repository root.
+// load writes the global config and a project config into a fresh project and loads them from its src
+// directory; the working directory stays at the project root.
 func load(t *testing.T, project string) (*config.Config, error) {
 	home, repo := t.TempDir(), t.TempDir()
 	isolateUserConfig(t, home)
@@ -22,7 +22,6 @@ func load(t *testing.T, project string) (*config.Config, error) {
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "catnip"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "catnip", "config.json"), []byte(global), 0o644))
-	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(repo, "src"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(repo, config.ProjectFile), []byte(project), 0o644))
 	t.Chdir(filepath.Join(repo, "src"))
@@ -83,6 +82,46 @@ func TestFor(t *testing.T) {
 			fix, check := c.For(tt.file)
 
 			assert.Equal(t, tt.fix, fix)
+			assert.Equal(t, tt.check, check)
+		})
+	}
+}
+
+func TestForFindsTheNearestProject(t *testing.T) {
+	tests := []struct {
+		name     string
+		projects map[string]string // directory → project config
+		check    []config.Command
+	}{
+		{
+			name:     "project above the file, path from its root",
+			projects: map[string]string{"a": `{"*.txt": {"check": {"outer": "lint {file}"}}}`},
+			check:    []config.Command{{Name: "outer", Cmd: "lint 'b/x.txt'"}},
+		},
+		{
+			name: "nested project replaces the outer one",
+			projects: map[string]string{
+				"a":   `{"*.txt": {"check": {"outer": "lint {file}"}}}`,
+				"a/b": `{"*.txt": {"check": {"inner": "lint {file}"}}}`,
+			},
+			check: []config.Command{{Name: "inner", Cmd: "lint 'x.txt'"}},
+		},
+		{name: "no project", projects: map[string]string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isolateUserConfig(t, t.TempDir())
+			t.Chdir(t.TempDir())
+			require.NoError(t, os.MkdirAll(filepath.Join("a", "b"), 0o755))
+			for dir, project := range tt.projects {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, config.ProjectFile), []byte(project), 0o644))
+			}
+			file := filepath.Join("a", "b", "x.txt")
+			c, err := config.Load(filepath.Dir(file))
+			require.NoError(t, err)
+
+			_, check := c.For(file)
+
 			assert.Equal(t, tt.check, check)
 		})
 	}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/hakastein/catnip/internal/check"
@@ -122,7 +123,7 @@ func editCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return badUsage
 	}
-	cfg, err := config.Load(".")
+	cfg, err := config.Load(filepath.Dir(path))
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return badUsage
@@ -163,7 +164,7 @@ func write(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return badUsage
 	}
 	path := args[0]
-	cfg, err := config.Load(".")
+	cfg, err := config.Load(filepath.Dir(path))
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return badUsage
@@ -201,7 +202,7 @@ func commit(cfg *config.Config, path string, before, after []byte, showFixDiff b
 		fmt.Fprint(stdout, edit.Diff(path, before, after))
 	}
 	fix, checks := cfg.For(path)
-	outcomes, err := check.Run(path, fix, checks)
+	outcomes, err := check.Run(cfg.Root, path, fix, checks)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return checkFailed

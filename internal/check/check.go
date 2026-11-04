@@ -19,16 +19,16 @@ type Outcome struct {
 	Diff string
 }
 
-// Run runs the fixers and then the checks on file through sh, in the current directory, and returns their
-// outcomes in run order.
-func Run(file string, fix, check []config.Command) ([]Outcome, error) {
+// Run runs the fixers and then the checks on file through sh in dir (the current directory if dir is "") and
+// returns their outcomes in run order.
+func Run(dir, file string, fix, check []config.Command) ([]Outcome, error) {
 	var out []Outcome
 	for _, c := range fix {
 		before, err := os.ReadFile(file)
 		if err != nil {
 			return out, err
 		}
-		o := run(c)
+		o := run(dir, c)
 		after, err := os.ReadFile(file)
 		if err != nil {
 			return out, err
@@ -37,13 +37,15 @@ func Run(file string, fix, check []config.Command) ([]Outcome, error) {
 		out = append(out, o)
 	}
 	for _, c := range check {
-		out = append(out, run(c))
+		out = append(out, run(dir, c))
 	}
 	return out, nil
 }
 
-func run(c config.Command) Outcome {
-	out, err := exec.Command("sh", "-c", c.Cmd).CombinedOutput()
+func run(dir string, c config.Command) Outcome {
+	cmd := exec.Command("sh", "-c", c.Cmd)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return Outcome{Name: c.Name}
 	}

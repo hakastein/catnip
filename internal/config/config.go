@@ -30,16 +30,16 @@ type Command struct {
 
 // Config is the merged project and global configuration.
 type Config struct {
-	// Root is the repository root holding the project config; globs with "/" match paths relative to it.
+	// Root is the directory holding the project config, "" without one; globs with "/" match paths relative to it
+	// and the commands run in it.
 	Root  string
 	rules map[string]Rule
 }
 
-// ProjectFile is the project config's name in the repository root.
+// ProjectFile is the project config's name; its directory is the project root.
 const ProjectFile = ".catnip.json"
 
-// Load reads the global config (<user config dir>/catnip/config.json) and the project config of the repository
-// containing dir. A project rule replaces the global rule for the same glob. A missing file is no rules.
+// Load reads the global config (<user config dir>/catnip/config.json) and the nearest project config from dir up. A project rule replaces the global rule for the same glob. A missing file is no rules.
 func Load(dir string) (*Config, error) {
 	c := &Config{Root: root(dir), rules: map[string]Rule{}}
 	d, err := os.UserConfigDir()
@@ -97,14 +97,16 @@ func named(name, cmd string) error {
 	return nil
 }
 
-// For lists the fixers and checks for file, in glob order and by name within a glob, with "{file}" filled in.
+// For lists the fixers and checks for file, in glob order and by name within a glob, with "{file}" filled in:
+// the path from Root, or file as given without a project config.
 func (c *Config) For(file string) (fix, check []Command) {
 	name := filepath.Base(file)
-	rel := ""
+	arg, rel := file, ""
 	if abs, err := filepath.Abs(file); err == nil && c.Root != "" {
+		arg = abs
 		if r, err := filepath.Rel(c.Root, abs); err == nil {
 			if r = filepath.ToSlash(r); r != ".." && !strings.HasPrefix(r, "../") {
-				rel = r
+				arg, rel = r, r
 			}
 		}
 	}
@@ -113,7 +115,7 @@ func (c *Config) For(file string) (fix, check []Command) {
 		globs = append(globs, g)
 	}
 	sort.Strings(globs)
-	quoted := "'" + strings.ReplaceAll(file, "'", `'\''`) + "'"
+	quoted := "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
 	for _, g := range globs {
 		subject := name
 		if strings.Contains(g, "/") {
@@ -136,14 +138,14 @@ func commands(named map[string]string, file string) []Command {
 	return out
 }
 
-// root is the nearest directory from dir up that holds .git, or "".
+// root is the nearest directory from dir up that holds the project config, or "".
 func root(dir string) string {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
 		return ""
 	}
 	for {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, ProjectFile)); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)
