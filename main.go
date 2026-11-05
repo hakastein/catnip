@@ -38,15 +38,32 @@ exit: 0 done, checks passed; 1 nothing written; 2 bad arguments or config;
   3 written, but a fixer or check failed or the file was written in part
 `
 
+// editOps are the edits of catnip edit, as both helps list them.
+const editOps = `  --replace OLD NEW [--count N]    replace the text OLD found exactly once, or exactly N times
+  --lines FROM#HASH[-TO#HASH] NEW  replace whole lines, addressed as catnip show prints them
+  --after LINE#HASH NEW            insert lines after the line
+  --before LINE#HASH NEW           insert lines before the line
+  an empty NEW deletes; --after and --before need a non-empty NEW
+`
+
 const usage = `catnip shows and edits files from the shell; commands chain with && by their exit codes.
 
-commands:
-  show   print a file or some of its lines, each after its address <line>#<hash>
-  edit   apply replacements and insertions to one file, all or none
-  write  write a file from stdin
-  stats  open a report on recorded catnip calls in the browser
+catnip show <path>[:40-80 | :57]
+  print the file, lines 40 to 80, or line 57 and 5 lines on each side; without flags each
+  line comes after its address <line>#<hash>, which catnip edit takes
 
-catnip <command> --help prints the help of the command.
+catnip edit <path> <edit>...
+  apply the edits to the file: all of them, or none if any does not match; every edit
+  addresses the file as it was before the command
+` + editOps + `
+catnip write <path> < content
+  write stdin to the file, creating it if missing
+
+catnip stats
+  open a report on recorded catnip calls in the browser
+
+After edit and write catnip prints the changed lines and runs the fixers and checks
+configured for the file. catnip <command> --help prints all flags of the command.
 ` + exitCodes
 
 const showHelp = `catnip show prints a file, a range of its lines or the lines around a position.
@@ -73,12 +90,7 @@ runs the fixers and checks configured for the file.
 usage: catnip edit [--show-fix-diff] <path> <edit>...
 
 edits:
-  --replace OLD NEW [--count N]    replace the text OLD found exactly once, or exactly N times
-  --lines FROM#HASH[-TO#HASH] NEW  replace whole lines, addressed as catnip show prints them
-  --after LINE#HASH NEW            insert lines after the line
-  --before LINE#HASH NEW           insert lines before the line
-  an empty NEW deletes; --after and --before need a non-empty NEW
-
+` + editOps + `
 flags:
   --show-fix-diff  also print what each fixer changed
 ` + exitCodes
