@@ -114,8 +114,10 @@ func TestRecord(t *testing.T) {
 			require.NoError(t, stats.Record(db, tt.call, 0, stats.Limit))
 
 			var got recorded
-			require.NoError(t, open(t, db).QueryRow(`SELECT command, flags, argv, replace(cwd, ?1, '~'), replace(file, ?1, '~'),
-				replace(project, ?1, '~'), replace(worktree, ?1, '~'), branch, replace(config, ?1, '~') FROM calls`, dir).
+			// paths with "/" on every platform
+			require.NoError(t, open(t, db).QueryRow(`SELECT command, flags, argv, replace(replace(cwd, ?1, '~'), '\', '/'),
+				replace(replace(file, ?1, '~'), '\', '/'), replace(replace(project, ?1, '~'), '\', '/'),
+				replace(replace(worktree, ?1, '~'), '\', '/'), branch, replace(replace(config, ?1, '~'), '\', '/') FROM calls`, dir).
 				Scan(&got.Command, &got.Flags, &got.Argv, &got.Cwd, &got.File, &got.Project, &got.Worktree, &got.Branch, &got.Config))
 			assert.Equal(t, tt.want, got)
 		})
