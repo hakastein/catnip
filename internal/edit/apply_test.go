@@ -350,6 +350,30 @@ func TestApply(t *testing.T) {
 			want: "a\nb\n\n",
 		},
 		{
+			name: "an insertion starting with an empty line after a terminated last line",
+			file: "a\n",
+			ops:  []edit.Op{{Insert: after(1, "a"), New: "\nx"}},
+			want: "a\n\nx\n",
+		},
+		{
+			name: "two insertions after an unterminated last line",
+			file: "a\nb",
+			ops:  []edit.Op{{Insert: after(2, "b"), New: "y"}, {Insert: after(2, "b"), New: "z"}},
+			want: "a\nb\ny\nz",
+		},
+		{
+			name: "an insertion after an empty line inserted after an unterminated last line",
+			file: "a\nb",
+			ops:  []edit.Op{{Insert: after(2, "b"), New: "\n"}, {Insert: after(2, "b"), New: "z"}},
+			want: "a\nb\n\nz",
+		},
+		{
+			name: "insert in place of the deleted only line",
+			file: "b",
+			ops:  []edit.Op{{Lines: lines(1, "b", 1, "b")}, {Insert: after(1, "b"), New: "z"}},
+			want: "z",
+		},
+		{
 			name: "lines ending with an empty one after an unterminated last line",
 			file: "a\nb",
 			ops:  []edit.Op{{Insert: after(2, "b"), New: "x\n\n"}},

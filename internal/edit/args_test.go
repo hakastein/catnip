@@ -51,6 +51,7 @@ func TestParseArgs(t *testing.T) {
 		{name: "insert at a range", args: []string{"--before", "1#0000-2#0000", "x"}, err: `--before: "1#0000-2#0000" is a range, want one LINE#HASH`},
 		{name: "insert at a reversed range", args: []string{"--after", "2#0000-1#0000", "x"}, err: `--after: "2#0000-1#0000" is a range, want one LINE#HASH`},
 		{name: "insert at a bad address", args: []string{"--after", "1", "x"}, err: `--after: "1" is not LINE#HASH as catnip show prints it`},
+		{name: "insert at a negative line", args: []string{"--after", "-1#0000", "x"}, err: `--after: "-1#0000" is not LINE#HASH as catnip show prints it`},
 		{name: "insert at line zero", args: []string{"--after", "0#0000", "x"}, err: `--after: "0#0000": lines start at 1`},
 		{name: "empty insert", args: []string{"--before", "1#0000", ""}, err: "--before: empty NEW inserts nothing"},
 		{name: "unknown argument", args: []string{"--middle", "a", "b"}, err: `unexpected "--middle": want --replace, --lines, --after or --before`},

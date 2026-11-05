@@ -151,6 +151,7 @@ func Apply(raw []byte, ops []Op) ([]byte, []Failure) {
 	})
 	var b strings.Builder
 	pos, owner, chop := 0, -1, false
+	unterminated := !strings.HasSuffix(text, "\n")
 	for _, c := range changes {
 		if c.start < pos {
 			f := Failure{c.op, fmt.Sprintf("overlaps edit %d", owner+1)}
@@ -160,7 +161,8 @@ func Apply(raw []byte, ops []Op) ([]byte, []Failure) {
 			continue
 		}
 		b.WriteString(text[pos:c.start])
-		if chop && c.start == pos { // an insertion after a deleted unterminated last line takes its place
+		// after an unterminated last line an insertion starts with a line break, unless the output already ends with one
+		if unterminated && c.start == len(text) && (b.Len() == 0 || strings.HasSuffix(b.String(), "\n")) {
 			c.text = strings.TrimPrefix(c.text, "\n")
 		}
 		b.WriteString(c.text)

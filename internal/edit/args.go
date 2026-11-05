@@ -56,7 +56,7 @@ func ParseArgs(args []string) ([]Op, error) {
 			if i+2 >= len(args) {
 				return nil, fmt.Errorf("%s needs LINE#HASH and NEW", name)
 			}
-			if strings.Contains(args[i+1], "-") {
+			if strings.Contains(args[i+1], "-") && lineRange.MatchString(args[i+1]) {
 				return nil, fmt.Errorf("%s: %q is a range, want one LINE#HASH", name, args[i+1])
 			}
 			r, err := parseRange(name, "LINE#HASH", args[i+1])
