@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,7 +37,7 @@ const usage = `usage:
   catnip show [--gutter hash|line|none] [--blame] [-C N] <path>[:<from>-<to> | :<line>[:<column>]]
   catnip edit [--show-fix-diff] <path> <edit>...
   catnip write [--show-fix-diff] <path> < content
-  catnip stats [--days N]
+  catnip stats
 
 show prints each line after its address <line>#<hash>; --gutter line prints the line number alone,
   --gutter none the text alone
@@ -48,8 +50,8 @@ edits, any number, all or none applied:
   --before LINE#HASH NEW           insert whole lines before the line
   an empty NEW deletes; --after and --before need a non-empty NEW
 
-stats writes an HTML report on every recorded call, or those of the last N days, prints its
-  path and opens it; every other call is recorded in <user config dir>/catnip/stats.db
+stats serves a report on the recorded calls at a local address until interrupted, prints the
+  address and opens it; every other call is recorded in <user config dir>/catnip/stats.db
 
 exit: 0 written and checks passed, 1 nothing written, 2 bad arguments or config,
   3 written but a fixer or check failed, or the file was written in part
@@ -57,8 +59,10 @@ exit: 0 written and checks passed, 1 nothing written, 2 bad arguments or config,
 
 func main() {
 	call := stats.Call{Time: time.Now(), Argv: os.Args[1:]}
-	code := run(call.Argv, os.Stdin, os.Stdout, os.Stderr, &call)
+	var errs strings.Builder
+	code := run(call.Argv, os.Stdin, os.Stdout, io.MultiWriter(os.Stderr, &errs), &call)
 	if len(call.Argv) == 0 || call.Argv[0] != "stats" {
+		call.Error = strings.Replace(errs.String(), usage, "", 1)
 		if p, err := stats.Path(); err == nil {
 			_ = stats.Record(p, call, code, stats.Limit) // the call's outcome does not depend on its statistics
 		}
@@ -92,6 +96,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.C
 func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 	fl := flag.NewFlagSet("show", flag.ContinueOnError)
 	fl.SetOutput(stderr)
+	fl.Usage = func() {} // the caller prints the usage of catnip
 	gutter := fl.String("gutter", "hash", "before each line: hash (<n>#<hash>), line (<n>) or none")
 	blame := fl.Bool("blame", false, "add git blame of each line")
 	context := fl.Int("C", 5, "lines of context around a position")
@@ -198,6 +203,7 @@ func editCmd(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 func fixFlags(name string, args []string, stderr io.Writer, call *stats.Call) (showFixDiff bool, rest []string, err error) {
 	fl := flag.NewFlagSet(name, flag.ContinueOnError)
 	fl.SetOutput(stderr)
+	fl.Usage = func() {} // the caller prints the usage of catnip
 	fl.BoolVar(&showFixDiff, "show-fix-diff", false, "also print what each fixer changed")
 	err = fl.Parse(args)
 	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
@@ -283,61 +289,55 @@ func commit(cfg *config.Config, path string, before, after []byte, showFixDiff b
 }
 
 func statsCmd(args []string, stdout, stderr io.Writer) int {
-	fl := flag.NewFlagSet("stats", flag.ContinueOnError)
-	fl.SetOutput(stderr)
-	days := fl.Int("days", 0, "only the calls of the last N days")
-	if err := fl.Parse(args); err != nil || fl.NArg() > 0 || *days < 0 {
+	if len(args) > 0 {
 		fmt.Fprint(stderr, usage)
 		return badUsage
 	}
-	var since time.Time
-	if *days > 0 {
-		since = time.Now().AddDate(0, 0, -*days)
-	}
 	db, err := stats.Path()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return notApplied
-	}
-	r, err := stats.Collect(db, since)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return notApplied
-	}
-	f, err := os.CreateTemp("", "catnip-stats-*.html")
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return notApplied
-	}
-	err = stats.Render(f, r)
-	if cerr := f.Close(); err == nil {
-		err = cerr
+	if err == nil {
+		_, err = os.Stat(db)
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return notApplied
 	}
-	fmt.Fprintln(stdout, f.Name())
-	browse(f.Name())
-	return ok
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return notApplied
+	}
+	url := "http://" + ln.Addr().String() + "/"
+	fmt.Fprintln(stdout, url)
+	browse(url)
+	fmt.Fprintln(stderr, http.Serve(ln, stats.Handler(db)))
+	return notApplied
 }
 
-// browse opens file in the browser when the system has a way to; its path is printed either way.
-func browse(file string) {
+// browse opens url in the browser when the system has a way to; the url is printed either way.
+func browse(url string) {
 	var cmd *exec.Cmd
-	switch _, wslview := exec.LookPath("wslview"); {
+	_, wslview := exec.LookPath("wslview")
+	_, wslpath := exec.LookPath("wslpath")
+	switch {
 	case runtime.GOOS == "darwin":
-		cmd = exec.Command("open", file)
+		cmd = exec.Command("open", url)
 	case runtime.GOOS == "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", file)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
 	case wslview == nil:
-		cmd = exec.Command("wslview", file)
-	default:
-		if win, err := exec.Command("wslpath", "-w", file).Output(); err == nil {
-			cmd = exec.Command("explorer.exe", strings.TrimSpace(string(win)))
-		} else {
-			cmd = exec.Command("xdg-open", file)
+		cmd = exec.Command("wslview", url)
+	case wslpath == nil:
+		explorer := "explorer.exe"
+		if _, err := exec.LookPath(explorer); err != nil {
+			// WSL with [interop] appendWindowsPath = false has no Windows directories in PATH
+			if p, err := exec.Command("wslpath", "-u", `C:\Windows\explorer.exe`).Output(); err == nil {
+				explorer = strings.TrimSpace(string(p))
+			}
 		}
+		cmd = exec.Command(explorer, url)
+	default:
+		cmd = exec.Command("xdg-open", url)
 	}
-	_ = cmd.Start()
+	if cmd.Start() == nil {
+		go cmd.Wait()
+	}
 }

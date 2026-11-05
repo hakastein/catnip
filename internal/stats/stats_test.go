@@ -1,10 +1,10 @@
 package stats_test
 
 import (
-	"bytes"
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,15 +16,31 @@ import (
 
 var noon = time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 
-// workspace makes a working directory holding files, path to content, and returns it with the database path.
+// workspace makes a working directory holding files, path to content, and returns it with the database path; "~" in
+// a content stands for the directory.
 func workspace(t *testing.T, files map[string]string) (dir, db string) {
 	dir = t.TempDir()
 	for name, content := range files {
-		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644))
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(strings.ReplaceAll(content, "~", dir)), 0o644))
 	}
 	t.Chdir(dir)
 	return dir, filepath.Join(dir, "stats", "stats.db")
+}
+
+// git files of a main working tree "main" on branch main with a linked worktree "wt" on branch feature/x.
+func worktree(more ...string) map[string]string {
+	files := map[string]string{
+		"main/.git/HEAD":                   "ref: refs/heads/main\n",
+		"main/.git/worktrees/wt/HEAD":      "ref: refs/heads/feature/x\n",
+		"main/.git/worktrees/wt/commondir": "../..\n",
+		"wt/.git":                          "gitdir: ~/main/.git/worktrees/wt\n",
+	}
+	for i := 0; i < len(more); i += 2 {
+		files[more[i]] = more[i+1]
+	}
+	return files
 }
 
 func open(t *testing.T, db string) *sql.DB {
@@ -49,45 +65,45 @@ func column[T any](t *testing.T, d *sql.DB, query string, args ...any) []T {
 	return out
 }
 
+// recorded is a recorded call with the workspace as "~" in paths.
+type recorded struct {
+	Command, Flags, Argv, Cwd, File, Project, Worktree, Branch, Config string
+}
+
 func TestRecord(t *testing.T) {
 	tests := []struct {
 		name  string
 		files map[string]string
 		cwd   string
 		call  stats.Call
-		code  int
-		want  []string // cwd, file, git root, catnip root with the workspace as ~, then argv
-		flags []string
+		want  recorded
 	}{
 		{
-			name:  "git repository with a project config below its root",
-			files: map[string]string{"repo/.git/HEAD": "", "repo/sub/.catnip.json": "{}"},
-			call:  stats.Call{Time: noon, Argv: []string{"edit", "repo/sub/a.go", "--replace", "<a>", "b", "--count", "2"}, File: "repo/sub/a.go", Flags: []string{"--replace", "--count"}},
-			want:  []string{"~", filepath.Join("~", "repo", "sub", "a.go"), filepath.Join("~", "repo"), filepath.Join("~", "repo", "sub"), `["edit","repo/sub/a.go","--replace","<a>","b","--count","2"]`},
-			flags: []string{"--replace", "--count"},
+			name:  "main working tree, project config below its root",
+			files: worktree("main/sub/.catnip.json", "{}"),
+			call: stats.Call{Time: noon, Argv: []string{"edit", "main/sub/a.go", "--replace", "<a>", "b", "--replace", "c", "d", "--count", "2"},
+				File: "main/sub/a.go", Flags: []string{"--replace", "--replace", "--count"}},
+			want: recorded{Command: "edit", Flags: "--count --replace", Argv: `["edit","main/sub/a.go","--replace","<a>","b","--replace","c","d","--count","2"]`,
+				Cwd: "~", File: "~/main/sub/a.go", Project: "~/main", Worktree: "~/main", Branch: "main", Config: "~/main/sub/.catnip.json"},
 		},
 		{
-			name:  "worktree, .git is a file",
-			files: map[string]string{"repo/.git": "gitdir: elsewhere"},
-			call:  stats.Call{Time: noon, Argv: []string{"show", "repo/a.txt:3"}, File: "repo/a.txt"},
-			want:  []string{"~", filepath.Join("~", "repo", "a.txt"), filepath.Join("~", "repo"), "", `["show","repo/a.txt:3"]`},
-			flags: []string{},
+			name:  "linked worktree without a config: project and config of the main tree",
+			files: worktree("main/.catnip.json", "{}"),
+			call:  stats.Call{Time: noon, Argv: []string{"show", "wt/a.txt:3"}, File: "wt/a.txt"},
+			want: recorded{Command: "show", Argv: `["show","wt/a.txt:3"]`, Cwd: "~", File: "~/wt/a.txt", Project: "~/main",
+				Worktree: "~/wt", Branch: "feature/x", Config: "~/main/.catnip.json"},
 		},
 		{
-			name:  "no file: roots from the working directory",
-			files: map[string]string{"repo/.git/HEAD": ""},
-			cwd:   "repo",
+			name:  "no file: repository from the working directory",
+			files: worktree(),
+			cwd:   "wt",
 			call:  stats.Call{Time: noon, Argv: []string{"grep", "--all", "x"}},
-			code:  2,
-			want:  []string{filepath.Join("~", "repo"), "", filepath.Join("~", "repo"), "", `["grep","--all","x"]`},
-			flags: []string{},
+			want:  recorded{Command: "grep", Argv: `["grep","--all","x"]`, Cwd: "~/wt", Project: "~/main", Worktree: "~/wt", Branch: "feature/x"},
 		},
 		{
-			name:  "no project",
-			call:  stats.Call{Time: noon, Argv: []string{}},
-			code:  2,
-			want:  []string{"~", "", "", "", `[]`},
-			flags: []string{},
+			name: "outside git the project is the working directory",
+			call: stats.Call{Time: noon, Argv: []string{}},
+			want: recorded{Argv: `[]`, Cwd: "~", Project: "~"},
 		},
 	}
 	for _, tt := range tests {
@@ -95,17 +111,59 @@ func TestRecord(t *testing.T) {
 			dir, db := workspace(t, tt.files)
 			t.Chdir(filepath.Join(dir, tt.cwd))
 
-			require.NoError(t, stats.Record(db, tt.call, tt.code, stats.Limit))
+			require.NoError(t, stats.Record(db, tt.call, 0, stats.Limit))
 
-			d := open(t, db)
-			var got [5]string
-			var code int
-			require.NoError(t, d.QueryRow(`SELECT replace(cwd, ?1, '~'), replace(file, ?1, '~'), replace(git_root, ?1, '~'),
-				replace(catnip_root, ?1, '~'), argv, exit_code FROM calls WHERE time = '2026-11-05T12:00:00.000Z'`, dir).
-				Scan(&got[0], &got[1], &got[2], &got[3], &got[4], &code))
-			assert.Equal(t, tt.want, got[:])
-			assert.Equal(t, tt.code, code)
-			assert.Equal(t, tt.flags, column[string](t, d, `SELECT name FROM flags ORDER BY rowid`))
+			var got recorded
+			// paths with "/" on every platform
+			require.NoError(t, open(t, db).QueryRow(`SELECT command, flags, argv, replace(replace(cwd, ?1, '~'), '\', '/'),
+				replace(replace(file, ?1, '~'), '\', '/'), replace(replace(project, ?1, '~'), '\', '/'),
+				replace(replace(worktree, ?1, '~'), '\', '/'), branch, replace(replace(config, ?1, '~'), '\', '/') FROM calls`, dir).
+				Scan(&got.Command, &got.Flags, &got.Argv, &got.Cwd, &got.File, &got.Project, &got.Worktree, &got.Branch, &got.Config))
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestRecordError(t *testing.T) {
+	tests := []struct {
+		name         string
+		err, file    string
+		stored, want string // error and its group
+	}{
+		{name: "no error", stored: "", want: ""},
+		{
+			name:   "changed line: file, numbers, address and the line after a tab",
+			err:    "p/a1.txt: edit 2: line 17 changed: 17#ab12\tx := 42\nnothing written\n",
+			file:   "p/a1.txt",
+			stored: "p/a1.txt: edit 2: line 17 changed: 17#ab12\tx := 42\nnothing written",
+			want:   "<file>: edit <n>: line <n> changed: <n>#<hash>",
+		},
+		{
+			name:   "text not found: quoted text holding \"; \", detail after \"; \"",
+			err:    `p/a.txt: edit 1: not found: "a; \"b\""; similar lines:` + "\n  3: a",
+			file:   "p/a.txt",
+			stored: `p/a.txt: edit 1: not found: "a; \"b\""; similar lines:` + "\n  3: a",
+			want:   "<file>: edit <n>: not found: <text>",
+		},
+		{name: "unknown command", err: "unknown command \"grep\"\n", stored: `unknown command "grep"`, want: "unknown command <text>"},
+		{name: "invented flag stays in the group", err: "flag provided but not defined: -all\n", stored: "flag provided but not defined: -all", want: "flag provided but not defined: -all"},
+		{name: "short file name only as a whole path", err: "open e: no such file or directory", file: "e", stored: "open e: no such file or directory", want: "open <file>: no such file or directory"},
+		{
+			name:   "long error cut to 1 KB on a rune boundary",
+			err:    "x" + strings.Repeat("é", 1000),
+			stored: "x" + strings.Repeat("é", 511),
+			want:   "x" + strings.Repeat("é", 511),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, db := workspace(t, nil)
+
+			require.NoError(t, stats.Record(db, stats.Call{Time: noon, Argv: []string{"edit"}, File: tt.file, Error: tt.err}, 1, stats.Limit))
+
+			var stored, group string
+			require.NoError(t, open(t, db).QueryRow(`SELECT error, error_group FROM calls`).Scan(&stored, &group))
+			assert.Equal(t, []string{tt.stored, tt.want}, []string{stored, group})
 		})
 	}
 }
@@ -124,71 +182,135 @@ func TestRecordLimit(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, db := workspace(t, nil)
 			for _, code := range tt.codes {
-				require.NoError(t, stats.Record(db, stats.Call{Time: noon, Argv: []string{"show", "a"}, Flags: []string{"--hash"}}, code, tt.limit))
+				require.NoError(t, stats.Record(db, stats.Call{Time: noon, Argv: []string{"show", "a"}}, code, tt.limit))
 			}
 
 			d := open(t, db)
 			assert.Equal(t, tt.argv, column[int](t, d, `SELECT exit_code FROM calls WHERE argv IS NOT NULL ORDER BY id`))
 			assert.Equal(t, tt.codes, column[int](t, d, `SELECT exit_code FROM calls ORDER BY id`))
-			assert.Len(t, column[string](t, d, `SELECT name FROM flags`), len(tt.codes))
 			assert.Equal(t, []int{2}, column[int](t, d, `PRAGMA auto_vacuum`), "incremental")
 		})
 	}
 }
 
-func TestCollect(t *testing.T) {
-	dir, db := workspace(t, map[string]string{"repo/.git/HEAD": ""})
-	repo, file := filepath.Join(dir, "repo"), filepath.Join(dir, "repo", "a.go")
+// history records five calls, ids 1 to 5, in a workspace with the main tree "main", its linked worktree "wt" and a
+// repository "other", and returns the workspace and the database.
+func history(t *testing.T) (dir, db string) {
+	dir, db = workspace(t, worktree("main/.catnip.json", "{}", "other/.git/HEAD", "ref: refs/heads/main\n"))
 	for _, c := range []struct {
 		call stats.Call
 		code int
 	}{
-		{stats.Call{Time: noon.AddDate(0, 0, -1), Argv: []string{"show", "--hash", "repo/a.go"}, File: "repo/a.go", Flags: []string{"--hash"}}, 0},
-		{stats.Call{Time: noon, Argv: []string{"edit", "repo/a.go", "--replace", "x", "y"}, File: "repo/a.go", Flags: []string{"--replace"}}, 1},
-		{stats.Call{Time: noon, Argv: []string{"grep", "x"}}, 2},
+		{stats.Call{Time: noon.AddDate(0, 0, -1), Argv: []string{"show", "main/a.txt"}, File: "main/a.txt"}, 0},
+		{stats.Call{Time: noon, Argv: []string{"edit", "wt/a.txt", "--lines", "3#abcd", "x"}, File: "wt/a.txt", Flags: []string{"--lines"},
+			Error: "wt/a.txt: edit 1: line 3 changed: 3#ab12\tx\nnothing written"}, 1},
+		{stats.Call{Time: noon, Argv: []string{"edit", "wt/a.txt", "--lines", "3#ab12", "x"}, File: "wt/a.txt", Flags: []string{"--lines"}}, 0},
+		{stats.Call{Time: noon, Argv: []string{"grep", "x"}, Error: `unknown command "grep"`}, 2},
+		{stats.Call{Time: noon.Add(time.Minute), Argv: []string{"show", "other/b.txt"}, File: "other/b.txt",
+			Error: "open other/b.txt: no such file or directory"}, 1},
 	} {
 		require.NoError(t, stats.Record(db, c.call, c.code, stats.Limit))
 	}
-	failures := [][]any{
-		{"2026-11-05T12:00:00.000Z", "grep", dir, "", int64(2), `["grep","x"]`},
-		{"2026-11-05T12:00:00.000Z", "edit", dir, file, int64(1), `["edit","repo/a.go","--replace","x","y"]`},
-	}
+	return dir, db
+}
+
+func TestQuery(t *testing.T) {
+	dir, db := history(t)
+	main, wt, other := filepath.Join(dir, "main"), filepath.Join(dir, "wt"), filepath.Join(dir, "other")
+	config := filepath.Join(main, ".catnip.json")
+	day0, day1, later := "2026-11-04T12:00:00.000Z", "2026-11-05T12:00:00.000Z", "2026-11-05T12:01:00.000Z"
+	_, offset := time.Now().Zone() // days are local by the current offset
+	today := noon.Add(time.Duration(offset) * time.Second).Format(time.DateOnly)
+	type row = map[string]any
 	tests := []struct {
-		name  string
-		since time.Time
-		want  *stats.Report
+		name   string
+		view   string
+		filter stats.Filter
+		want   []row
 	}{
 		{
-			name: "every call",
-			want: &stats.Report{
-				Summary:  [][]any{{int64(3), int64(1), "2026-11-04T12:00:00.000Z", "2026-11-05T12:00:00.000Z"}},
-				Days:     [][]any{{"2026-11-04", "show", int64(1)}, {"2026-11-05", "edit", int64(1)}, {"2026-11-05", "other", int64(1)}},
-				Projects: [][]any{{repo, "", int64(2), int64(1), int64(1), int64(0), int64(1)}, {"", "", int64(1), int64(0), int64(0), int64(0), int64(1)}},
-				Dirs:     [][]any{{dir, int64(3)}},
-				Codes:    [][]any{{"edit", int64(1), int64(1)}, {"other", int64(2), int64(1)}, {"show", int64(0), int64(1)}},
-				Flags:    [][]any{{"--hash", int64(1)}, {"--replace", int64(1)}},
-				Failures: failures,
-				Commands: [][]any{{"grep", int64(1)}},
+			name: "summary",
+			view: "summary",
+			want: []row{{"calls": int64(5), "failed": int64(3), "projects": int64(3), "worktrees": int64(3), "files": int64(3),
+				"groups": int64(3), "first": day0, "last": later}},
+		},
+		{
+			name:   "summary of no calls",
+			view:   "summary",
+			filter: stats.Filter{Kind: "grep --all"},
+			want: []row{{"calls": int64(0), "failed": int64(0), "projects": int64(0), "worktrees": int64(0), "files": int64(0),
+				"groups": int64(0), "first": nil, "last": nil}},
+		},
+		{
+			name: "files, by calls",
+			view: "files",
+			want: []row{
+				{"file": filepath.Join(wt, "a.txt"), "project": main, "worktree": wt, "calls": int64(2), "failed": int64(1), "last": day1},
+				{"file": filepath.Join(main, "a.txt"), "project": main, "worktree": main, "calls": int64(1), "failed": int64(0), "last": day0},
+				{"file": filepath.Join(other, "b.txt"), "project": other, "worktree": other, "calls": int64(1), "failed": int64(1), "last": later},
 			},
 		},
 		{
-			name:  "since a time",
-			since: noon,
-			want: &stats.Report{
-				Summary:  [][]any{{int64(2), int64(1), "2026-11-05T12:00:00.000Z", "2026-11-05T12:00:00.000Z"}},
-				Days:     [][]any{{"2026-11-05", "edit", int64(1)}, {"2026-11-05", "other", int64(1)}},
-				Projects: [][]any{{"", "", int64(1), int64(0), int64(0), int64(0), int64(1)}, {repo, "", int64(1), int64(0), int64(1), int64(0), int64(1)}},
-				Dirs:     [][]any{{dir, int64(2)}},
-				Codes:    [][]any{{"edit", int64(1), int64(1)}, {"other", int64(2), int64(1)}},
-				Flags:    [][]any{{"--replace", int64(1)}},
-				Failures: failures,
-				Commands: [][]any{{"grep", int64(1)}},
+			name: "projects, by calls",
+			view: "projects",
+			want: []row{
+				{"project": main, "calls": int64(3), "failed": int64(1), "worktrees": int64(2), "show": int64(1), "edit": int64(2), "write": int64(0), "last": day1},
+				{"project": dir, "calls": int64(1), "failed": int64(1), "worktrees": int64(0), "show": int64(0), "edit": int64(0), "write": int64(0), "last": day1},
+				{"project": other, "calls": int64(1), "failed": int64(1), "worktrees": int64(1), "show": int64(1), "edit": int64(0), "write": int64(0), "last": later},
 			},
+		},
+		{
+			name:   "worktrees of a project, latest first",
+			view:   "worktrees",
+			filter: stats.Filter{Project: main},
+			want: []row{
+				{"worktree": wt, "branch": "feature/x", "config": config, "calls": int64(2), "failed": int64(1), "last": day1},
+				{"worktree": main, "branch": "main", "config": config, "calls": int64(1), "failed": int64(0), "last": day0},
+			},
+		},
+		{
+			name:   "usage: command with its flags by exit code",
+			view:   "usage",
+			filter: stats.Filter{Project: main},
+			want: []row{
+				{"kind": "edit --lines", "code": int64(0), "calls": int64(1)},
+				{"kind": "edit --lines", "code": int64(1), "calls": int64(1)},
+				{"kind": "show", "code": int64(0), "calls": int64(1)},
+			},
+		},
+		{
+			name: "error groups",
+			view: "errors",
+			want: []row{
+				{"group": "<file>: edit <n>: line <n> changed: <n>#<hash>", "code": int64(1), "calls": int64(1), "projects": int64(1), "files": int64(1), "first": day1, "last": day1},
+				{"group": "open <file>: no such file or directory", "code": int64(1), "calls": int64(1), "projects": int64(1), "files": int64(1), "first": later, "last": later},
+				{"group": "unknown command <text>", "code": int64(2), "calls": int64(1), "projects": int64(1), "files": int64(0), "first": day1, "last": day1},
+			},
+		},
+		{
+			name:   "days since a time",
+			view:   "days",
+			filter: stats.Filter{Since: noon},
+			want: []row{
+				{"day": today, "code": int64(0), "calls": int64(1)},
+				{"day": today, "code": int64(1), "calls": int64(2)},
+				{"day": today, "code": int64(2), "calls": int64(1)},
+			},
+		},
+		{
+			name:   "call of an error group, every column",
+			view:   "calls",
+			filter: stats.Filter{Group: "<file>: edit <n>: line <n> changed: <n>#<hash>"},
+			want: []row{{
+				"id": int64(2), "time": day1, "kind": "edit --lines", "code": int64(1), "argv": `["edit","wt/a.txt","--lines","3#abcd","x"]`,
+				"error": "wt/a.txt: edit 1: line 3 changed: 3#ab12\tx\nnothing written", "group": "<file>: edit <n>: line <n> changed: <n>#<hash>",
+				"cwd": dir, "file": filepath.Join(wt, "a.txt"), "project": main, "worktree": wt, "branch": "feature/x", "config": config,
+			}},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := stats.Collect(db, tt.since)
+			got, err := stats.Query(db, tt.view, tt.filter)
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
@@ -196,21 +318,48 @@ func TestCollect(t *testing.T) {
 	}
 }
 
-func TestCollectWithoutDatabase(t *testing.T) {
-	_, err := stats.Collect(filepath.Join(t.TempDir(), "stats.db"), time.Time{})
+func TestQueryCalls(t *testing.T) {
+	dir, db := history(t)
+	tests := []struct {
+		name   string
+		filter stats.Filter
+		ids    []int64
+	}{
+		{name: "every call, newest first", ids: []int64{5, 4, 3, 2, 1}},
+		{name: "failed", filter: stats.Filter{Code: "failed"}, ids: []int64{5, 4, 2}},
+		{name: "exit code", filter: stats.Filter{Code: "0"}, ids: []int64{3, 1}},
+		{name: "kind and exit code", filter: stats.Filter{Kind: "edit --lines", Code: "1"}, ids: []int64{2}},
+		{name: "command without flags", filter: stats.Filter{Kind: "show"}, ids: []int64{5, 1}},
+		{name: "file", filter: stats.Filter{File: filepath.Join(dir, "wt", "a.txt")}, ids: []int64{3, 2}},
+		{name: "worktree", filter: stats.Filter{Worktree: filepath.Join(dir, "main")}, ids: []int64{1}},
+		{name: "since a time", filter: stats.Filter{Since: noon.Add(time.Minute)}, ids: []int64{5}},
+		{name: "next page", filter: stats.Filter{Before: 3}, ids: []int64{2, 1}},
+		{name: "one call", filter: stats.Filter{ID: 4}, ids: []int64{4}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows, err := stats.Query(db, "calls", tt.filter)
+			require.NoError(t, err)
 
-	assert.ErrorIs(t, err, os.ErrNotExist)
+			ids := []int64{}
+			for _, r := range rows {
+				ids = append(ids, r["id"].(int64))
+			}
+			assert.Equal(t, tt.ids, ids)
+		})
+	}
 }
 
-func TestRender(t *testing.T) {
-	r := &stats.Report{
-		Summary:  [][]any{{int64(1), int64(0), "2026-11-05T12:00:00.000Z", "2026-11-05T12:00:00.000Z"}},
-		Failures: [][]any{{"2026-11-05T12:00:00.000Z", "edit", "/w", "/w/a", int64(1), `["edit","a","--replace","</script><b>x","y"]`}},
-	}
-	var out bytes.Buffer
+func TestQueryUnknownView(t *testing.T) {
+	_, db := history(t)
 
-	require.NoError(t, stats.Render(&out, r))
+	_, err := stats.Query(db, "flags", stats.Filter{})
 
-	assert.NotContains(t, out.String(), "</script><b>", "argv stays data inside the page script")
-	assert.Contains(t, out.String(), `\u003c/script\u003e\u003cb\u003ex`)
+	assert.EqualError(t, err, `no view "flags"`)
+}
+
+func TestQueryWithoutDatabase(t *testing.T) {
+	_, err := stats.Query(filepath.Join(t.TempDir(), "stats.db"), "calls", stats.Filter{})
+
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }
