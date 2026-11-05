@@ -98,7 +98,7 @@ prints the address and opens it in the browser. Every other call is recorded in
 
 usage: catnip stats
 
-exit: 1 no stats database or the server stopped, 2 bad arguments
+exit: 1 the report failed to start or stopped, 2 bad arguments
 `
 
 // helps are the helps of the commands by name.
