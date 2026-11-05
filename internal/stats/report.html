@@ -44,7 +44,7 @@ const outcome = c => outcomes[c] ?? `exit ${c}`;
 const filters = ['project', 'worktree', 'kind', 'code', 'file', 'group'];
 const pageSize = 100; // stats.PageSize
 const local = t => t ? new Date(t).toLocaleString() : '';
-let chart;
+let chart, seq = 0; // seq drops the answers of a render a newer one replaced
 
 // The page state is the hash: the period and the filters.
 const state = () => {
@@ -66,6 +66,8 @@ function el(tag, attrs, ...children) {
 }
 // link sets filters on click.
 const link = (text, changes) => el('a', {class: 'go', onclick: e => { e.stopPropagation(); go(changes); }}, text);
+// pick makes a row set filters on click, unless value is empty: an empty filter matches every call.
+const pick = (value, changes) => value ? {class: 'go', onclick: () => go(changes)} : {};
 const num = (n, attrs) => el('td', {class: 'n', ...attrs}, n ?? 0);
 const table = (head, rows) => el('table', {}, el('tr', {}, ...head.map(h => el('th', {}, h))), ...rows);
 
@@ -95,14 +97,16 @@ async function render() {
     el('button', {title: 'remove', onclick: () => go({[k]: null})}, '×'))));
   const project = s.get('project');
   const root = document.getElementById('report');
+  const my = ++seq;
   let days, places, usage, errors, calls;
   try {
     [days, places, usage, errors, calls] = await Promise.all([
       api('days'), api(project ? 'worktrees' : 'projects'), api('usage'), api('errors'), api('calls')]);
   } catch (e) {
-    root.replaceChildren(el('p', {class: 'err'}, e.message));
+    if (my === seq) root.replaceChildren(el('p', {class: 'err'}, e.message));
     return;
   }
+  if (my !== seq) return;
   const total = places.reduce((n, r) => n + r.calls, 0), failed = places.reduce((n, r) => n + r.failed, 0);
   root.replaceChildren(
     el('p', {}, `calls: ${total}, failed: ${failed}` + (total ? ` (${Math.round(100 * failed / total)}%)` : '')),
@@ -142,7 +146,7 @@ function projects(rows) {
 
 function worktrees(rows, project) {
   return [el('h2', {}, project), table(['worktree', 'branch', 'config', 'calls', 'failed', 'last call'], rows.map(r =>
-    el('tr', {class: 'go', onclick: () => go({worktree: r.worktree})},
+    el('tr', pick(r.worktree, {worktree: r.worktree}),
       el('td', {}, r.worktree === project ? '(main)' : rel(r.worktree, project) || '(no git)'), el('td', {}, r.branch),
       el('td', {}, rel(r.config, project) || el('span', {class: 'muted'}, 'none')),
       num(r.calls), num(r.failed), el('td', {}, local(r.last)))))];
@@ -155,7 +159,7 @@ function usageTable(rows) {
     const all = codes.reduce((n, c) => n + count(k, c), 0), bad = all - count(k, 0);
     return el('tr', {},
       el('td', {}, k ? link(k, {kind: k}) : '(none)'),
-      ...codes.map(c => count(k, c) ? num(count(k, c), {class: 'n go', onclick: () => go({kind: k, code: String(c)})}) : num('')),
+      ...codes.map(c => count(k, c) ? num(count(k, c), k ? {class: 'n go', onclick: () => go({kind: k, code: String(c)})} : {}) : num('')),
       num(all), num(bad ? `${bad} (${Math.round(100 * bad / all)}%)` : ''));
   }));
 }
@@ -163,7 +167,7 @@ function usageTable(rows) {
 function errorsTable(rows) {
   if (!rows.length) return el('p', {class: 'muted'}, 'none');
   return table(['error', 'outcome', 'calls', 'last'], rows.map(r =>
-    el('tr', {class: 'go', onclick: () => go({group: r.group})},
+    el('tr', pick(r.group, {group: r.group}),
       el('td', {}, el('pre', {}, r.group || '(no message)')), el('td', {}, outcome(r.code)), num(r.calls), el('td', {}, local(r.last)))));
 }
 
@@ -188,7 +192,11 @@ function feed(rows) {
       t.append(row);
     }
     more.hidden = rows.length < pageSize;
-    if (rows.length) more.onclick = () => api('calls', {before: rows[rows.length - 1].id}).then(add);
+    more.disabled = false;
+    if (rows.length) more.onclick = () => {
+      more.disabled = true;
+      api('calls', {before: rows[rows.length - 1].id}).then(add, e => more.replaceWith(e.message));
+    };
   };
   add(rows);
   return el('div', {}, rows.length ? t : el('p', {class: 'muted'}, 'none'), more);
@@ -203,7 +211,7 @@ function card(r) {
     line('outcome', outcome(r.code)),
     line('command', argv ? el('pre', {}, cmd) : el('span', {class: 'muted'}, 'argv dropped: the database outgrew its limit'),
       argv ? el('button', {onclick: e => { e.stopPropagation(); navigator.clipboard.writeText(cmd); }}, 'copy') : ''),
-    ...(r.error ? [line('error', el('pre', {}, r.error)), line('error group', link(r.group, {group: r.group}))] : []),
+    ...(r.error ? [line('error', el('pre', {}, r.error)), line('error group', r.group ? link(r.group, {group: r.group}) : '')] : []),
     line('cwd', r.cwd),
     line('file', r.file ? link(r.file, {file: r.file}) : ''),
     line('project', link(r.project, {project: r.project})),

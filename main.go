@@ -96,6 +96,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.C
 func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 	fl := flag.NewFlagSet("show", flag.ContinueOnError)
 	fl.SetOutput(stderr)
+	fl.Usage = func() {} // the caller prints the usage of catnip
 	gutter := fl.String("gutter", "hash", "before each line: hash (<n>#<hash>), line (<n>) or none")
 	blame := fl.Bool("blame", false, "add git blame of each line")
 	context := fl.Int("C", 5, "lines of context around a position")
@@ -202,6 +203,7 @@ func editCmd(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 func fixFlags(name string, args []string, stderr io.Writer, call *stats.Call) (showFixDiff bool, rest []string, err error) {
 	fl := flag.NewFlagSet(name, flag.ContinueOnError)
 	fl.SetOutput(stderr)
+	fl.Usage = func() {} // the caller prints the usage of catnip
 	fl.BoolVar(&showFixDiff, "show-fix-diff", false, "also print what each fixer changed")
 	err = fl.Parse(args)
 	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })

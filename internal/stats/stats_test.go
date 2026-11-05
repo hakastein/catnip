@@ -144,7 +144,8 @@ func TestRecordError(t *testing.T) {
 			want:   "<file>: edit <n>: not found: <text>",
 		},
 		{name: "unknown command", err: "unknown command \"grep\"\n", stored: `unknown command "grep"`, want: "unknown command <text>"},
-		{name: "invented flag stays in the group", err: "flag provided but not defined: -all\nUsage of show:\n", stored: "flag provided but not defined: -all\nUsage of show:", want: "flag provided but not defined: -all"},
+		{name: "invented flag stays in the group", err: "flag provided but not defined: -all\n", stored: "flag provided but not defined: -all", want: "flag provided but not defined: -all"},
+		{name: "short file name only as a whole path", err: "open e: no such file or directory", file: "e", stored: "open e: no such file or directory", want: "open <file>: no such file or directory"},
 		{
 			name:   "long error cut to 1 KB on a rune boundary",
 			err:    "x" + strings.Repeat("é", 1000),
@@ -216,6 +217,8 @@ func TestQuery(t *testing.T) {
 	main, wt, other := filepath.Join(dir, "main"), filepath.Join(dir, "wt"), filepath.Join(dir, "other")
 	config := filepath.Join(main, ".catnip.json")
 	day0, day1, later := "2026-11-04T12:00:00.000Z", "2026-11-05T12:00:00.000Z", "2026-11-05T12:01:00.000Z"
+	_, offset := time.Now().Zone() // days are local by the current offset
+	today := noon.Add(time.Duration(offset) * time.Second).Format(time.DateOnly)
 	type row = map[string]any
 	tests := []struct {
 		name   string
@@ -265,9 +268,9 @@ func TestQuery(t *testing.T) {
 			view:   "days",
 			filter: stats.Filter{Since: noon},
 			want: []row{
-				{"day": "2026-11-05", "code": int64(0), "calls": int64(1)},
-				{"day": "2026-11-05", "code": int64(1), "calls": int64(2)},
-				{"day": "2026-11-05", "code": int64(2), "calls": int64(1)},
+				{"day": today, "code": int64(0), "calls": int64(1)},
+				{"day": today, "code": int64(1), "calls": int64(2)},
+				{"day": today, "code": int64(2), "calls": int64(1)},
 			},
 		},
 		{

@@ -151,8 +151,9 @@ var (
 // line addresses and numbers. The detail after "; " or a tab is dropped.
 func group(text, file string) string {
 	line, _, _ := strings.Cut(text, "\n")
-	if file != "" {
-		line = strings.ReplaceAll(line, file, "<file>")
+	if file != "" { // only the whole path: a short name like "e" is also a part of words
+		path := regexp.MustCompile(`(^|[\s:"'(])` + regexp.QuoteMeta(file) + `($|[\s:"')])`)
+		line = path.ReplaceAllString(line, "${1}<file>${2}")
 	}
 	line = quoted.ReplaceAllString(line, "<text>")
 	line, _, _ = strings.Cut(line, "; ")
