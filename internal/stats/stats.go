@@ -172,28 +172,37 @@ type Filter struct {
 	Code string
 	// Before keeps the calls with a smaller id, 0 every call: the calls view lists the next page from the last id.
 	Before int64
+	// ID keeps the one call, 0 every call.
+	ID int64
 }
 
-// PageSize is how many calls the calls view lists at once.
+// PageSize is how many calls the calls view lists at once, and how many files the files view lists.
 const PageSize = 100
 
 // views are the report's queries over c, the filtered calls with their kind. Days are local by the current UTC offset.
 var views = map[string]string{
+	"summary": `SELECT count(*) AS calls, coalesce(sum(exit_code <> 0), 0) AS failed, count(DISTINCT project) AS projects,
+		count(DISTINCT nullif(worktree, '')) AS worktrees, count(DISTINCT nullif(file, '')) AS files,
+		count(DISTINCT CASE WHEN exit_code <> 0 THEN error_group END) AS groups, min(time) AS first, max(time) AS last
+		FROM c`,
 	"days": `SELECT day, exit_code AS code, count(*) AS calls FROM c GROUP BY day, code ORDER BY day, code`,
-	"projects": `SELECT project, count(*) AS calls, sum(exit_code <> 0) AS failed, sum(command = 'show') AS show,
-		sum(command = 'edit') AS edit, sum(command = 'write') AS write, max(time) AS last FROM c GROUP BY project
-		ORDER BY calls DESC, project`,
+	"projects": `SELECT project, count(*) AS calls, sum(exit_code <> 0) AS failed, count(DISTINCT nullif(worktree, ''))
+		AS worktrees, sum(command = 'show') AS show, sum(command = 'edit') AS edit, sum(command = 'write') AS write,
+		max(time) AS last FROM c GROUP BY project ORDER BY calls DESC, project`,
 	"worktrees": `SELECT worktree, branch, config, count(*) AS calls, sum(exit_code <> 0) AS failed, max(time) AS last
 		FROM c GROUP BY worktree, branch, config ORDER BY last DESC, worktree`,
 	"usage": `SELECT kind, exit_code AS code, count(*) AS calls FROM c GROUP BY kind, code ORDER BY kind, code`,
-	"errors": `SELECT error_group AS "group", max(exit_code) AS code, count(*) AS calls, max(time) AS last FROM c
+	"errors": `SELECT error_group AS "group", max(exit_code) AS code, count(*) AS calls, count(DISTINCT project) AS projects,
+		count(DISTINCT nullif(file, '')) AS files, min(time) AS first, max(time) AS last FROM c
 		WHERE exit_code <> 0 GROUP BY error_group ORDER BY calls DESC, error_group`,
+	"files": `SELECT file, project, worktree, count(*) AS calls, sum(exit_code <> 0) AS failed, max(time) AS last FROM c
+		WHERE file <> '' GROUP BY file ORDER BY calls DESC, file LIMIT ` + strconv.Itoa(PageSize),
 	"calls": `SELECT id, time, kind, exit_code AS code, argv, error, error_group AS "group", cwd, file, project, worktree,
 		branch, config FROM c ORDER BY id DESC LIMIT ` + strconv.Itoa(PageSize),
 }
 
-// Query reads a view from the database at path: days, projects, worktrees, usage, errors or calls. Each row maps
-// a column to its value.
+// Query reads a view from the database at path: summary, days, projects, worktrees, usage, errors, files or calls.
+// Each row maps a column to its value.
 func Query(path, view string, f Filter) ([]map[string]any, error) {
 	q, ok := views[view]
 	if !ok {
@@ -215,8 +224,9 @@ func Query(path, view string, f Filter) ([]map[string]any, error) {
 	rs, err := db.Query(`WITH c AS (SELECT *, trim(command || ' ' || flags) AS kind, date(time, ?9) AS day FROM calls
 		WHERE time >= ?1 AND (?2 = '' OR project = ?2) AND (?3 = '' OR worktree = ?3) AND (?4 = '' OR file = ?4)
 		AND (?5 = '' OR error_group = ?5) AND (?6 = '' OR trim(command || ' ' || flags) = ?6)
-		AND (?7 = '' OR ?7 = 'failed' AND exit_code <> 0 OR exit_code = ?7) AND (?8 = 0 OR id < ?8)) `+q,
-		since, f.Project, f.Worktree, f.File, f.Group, f.Kind, f.Code, f.Before, fmt.Sprintf("%+d seconds", offset))
+		AND (?7 = '' OR ?7 = 'failed' AND exit_code <> 0 OR exit_code = ?7) AND (?8 = 0 OR id < ?8)
+		AND (?10 = 0 OR id = ?10)) `+q,
+		since, f.Project, f.Worktree, f.File, f.Group, f.Kind, f.Code, f.Before, fmt.Sprintf("%+d seconds", offset), f.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +258,7 @@ func Query(path, view string, f Filter) ([]map[string]any, error) {
 var page string
 
 // Handler serves the report page and, at /api/<view>, each view as JSON over the database at path. The query
-// parameters days, project, worktree, file, group, kind, code and before fill the Filter. Only requests to 127.0.0.1
+// parameters days, project, worktree, file, group, kind, code, before and id fill the Filter. Only requests to 127.0.0.1
 // or localhost are served, so a web page cannot reach the report through a name that resolves to this machine.
 func Handler(path string) http.Handler {
 	mux := http.NewServeMux()
@@ -264,6 +274,7 @@ func Handler(path string) http.Handler {
 			f.Since = time.Now().AddDate(0, 0, -days)
 		}
 		f.Before, _ = strconv.ParseInt(q.Get("before"), 10, 64)
+		f.ID, _ = strconv.ParseInt(q.Get("id"), 10, 64)
 		rows, err := Query(path, r.PathValue("view"), f)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

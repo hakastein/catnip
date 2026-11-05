@@ -229,12 +229,27 @@ func TestQuery(t *testing.T) {
 		want   []row
 	}{
 		{
+			name: "summary",
+			view: "summary",
+			want: []row{{"calls": int64(5), "failed": int64(3), "projects": int64(3), "worktrees": int64(3), "files": int64(3),
+				"groups": int64(3), "first": day0, "last": later}},
+		},
+		{
+			name: "files, by calls",
+			view: "files",
+			want: []row{
+				{"file": filepath.Join(wt, "a.txt"), "project": main, "worktree": wt, "calls": int64(2), "failed": int64(1), "last": day1},
+				{"file": filepath.Join(main, "a.txt"), "project": main, "worktree": main, "calls": int64(1), "failed": int64(0), "last": day0},
+				{"file": filepath.Join(other, "b.txt"), "project": other, "worktree": other, "calls": int64(1), "failed": int64(1), "last": later},
+			},
+		},
+		{
 			name: "projects, by calls",
 			view: "projects",
 			want: []row{
-				{"project": main, "calls": int64(3), "failed": int64(1), "show": int64(1), "edit": int64(2), "write": int64(0), "last": day1},
-				{"project": dir, "calls": int64(1), "failed": int64(1), "show": int64(0), "edit": int64(0), "write": int64(0), "last": day1},
-				{"project": other, "calls": int64(1), "failed": int64(1), "show": int64(1), "edit": int64(0), "write": int64(0), "last": later},
+				{"project": main, "calls": int64(3), "failed": int64(1), "worktrees": int64(2), "show": int64(1), "edit": int64(2), "write": int64(0), "last": day1},
+				{"project": dir, "calls": int64(1), "failed": int64(1), "worktrees": int64(0), "show": int64(0), "edit": int64(0), "write": int64(0), "last": day1},
+				{"project": other, "calls": int64(1), "failed": int64(1), "worktrees": int64(1), "show": int64(1), "edit": int64(0), "write": int64(0), "last": later},
 			},
 		},
 		{
@@ -260,9 +275,9 @@ func TestQuery(t *testing.T) {
 			name: "error groups",
 			view: "errors",
 			want: []row{
-				{"group": "<file>: edit <n>: line <n> changed: <n>#<hash>", "code": int64(1), "calls": int64(1), "last": day1},
-				{"group": "open <file>: no such file or directory", "code": int64(1), "calls": int64(1), "last": later},
-				{"group": "unknown command <text>", "code": int64(2), "calls": int64(1), "last": day1},
+				{"group": "<file>: edit <n>: line <n> changed: <n>#<hash>", "code": int64(1), "calls": int64(1), "projects": int64(1), "files": int64(1), "first": day1, "last": day1},
+				{"group": "open <file>: no such file or directory", "code": int64(1), "calls": int64(1), "projects": int64(1), "files": int64(1), "first": later, "last": later},
+				{"group": "unknown command <text>", "code": int64(2), "calls": int64(1), "projects": int64(1), "files": int64(0), "first": day1, "last": day1},
 			},
 		},
 		{
@@ -312,6 +327,7 @@ func TestQueryCalls(t *testing.T) {
 		{name: "worktree", filter: stats.Filter{Worktree: filepath.Join(dir, "main")}, ids: []int64{1}},
 		{name: "since a time", filter: stats.Filter{Since: noon.Add(time.Minute)}, ids: []int64{5}},
 		{name: "next page", filter: stats.Filter{Before: 3}, ids: []int64{2, 1}},
+		{name: "one call", filter: stats.Filter{ID: 4}, ids: []int64{4}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

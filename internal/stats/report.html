@@ -1,227 +1,628 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>catnip stats</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.6.1/dist/chart.umd.min.js" integrity="sha384-Emf5ZVIUiarAdhkgtqK+5/Z5qIvM6QoVrS+qAVtfyZVuD5lIHrac0me485+Antp0" crossorigin="anonymous"></script>
 <style>
-  body { font: 14px system-ui, sans-serif; margin: 2em auto; max-width: 1200px; padding: 0 1em; color: #222; }
-  h2 { margin-top: 2em; }
-  table { border-collapse: collapse; width: 100%; }
-  th, td { border-bottom: 1px solid #ddd; padding: .3em .8em; text-align: left; vertical-align: top; }
-  th { background: #f4f4f4; white-space: nowrap; }
-  td { word-break: break-all; }
-  td.n { text-align: right; white-space: nowrap; word-break: normal; }
-  pre { white-space: pre-wrap; word-break: break-all; margin: 0; }
-  .chart { height: 260px; }
-  .go { cursor: pointer; }
-  tr.go:hover, td.go:hover, a.go:hover { background: #eef4ff; }
-  a.go { color: #0645ad; }
-  .bar { display: flex; gap: .5em; align-items: center; flex-wrap: wrap; }
-  .chip { background: #eef4ff; border: 1px solid #bcd; border-radius: 1em; padding: .1em .7em; }
-  .chip button { border: none; background: none; cursor: pointer; padding: 0 0 0 .3em; }
-  .card td { background: #fafafa; }
-  .card th { background: none; width: 8em; }
-  .muted { color: #777; }
-  .err { color: #b00; }
+  :root, [data-theme=dark] {
+    --bg: #0d1117; --surface: #151b23; --surface-2: #1f2733; --border: #283140;
+    --text: #e6edf3; --muted: #9ea8b4; --faint: #85909d; --accent: #58a6ff;
+    --o-ok: #3fb950; --o-na: #d29922; --o-bu: #f85149; --o-cf: #db61a2; --shadow: rgba(0, 0, 0, .45);
+    color-scheme: dark;
+  }
+  [data-theme=light] {
+    --bg: #f6f8fa; --surface: #ffffff; --surface-2: #e4e9ee; --border: #d8dee4;
+    --text: #1f2328; --muted: #57606a; --faint: #6a737d; --accent: #0969da;
+    --o-ok: #1a7f37; --o-na: #9a6700; --o-bu: #cf222e; --o-cf: #bf3989; --shadow: rgba(31, 35, 40, .15);
+    color-scheme: light;
+  }
+  :root { --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, Consolas, monospace; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: inherit; text-decoration: none; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+  .top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px; padding: 10px 24px;
+    background: var(--bg); border-bottom: 1px solid var(--border); }
+  .brand { font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
+  .brand span { color: var(--muted); font-weight: 500; margin-left: 4px; }
+  .crumbs { display: flex; align-items: center; gap: 8px; color: var(--muted); min-width: 0; flex: 1; }
+  .crumbs > * { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .crumbs a:hover { color: var(--text); }
+  .crumbs .sep { color: var(--faint); flex: none; }
+  .crumbs .here { color: var(--text); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex: none; }
+  .seg button { all: unset; cursor: pointer; padding: 4px 10px; color: var(--muted); font-size: 13px; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--text); }
+  .icon { all: unset; cursor: pointer; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px;
+    border: 1px solid var(--border); color: var(--muted); flex: none; }
+  .icon:hover { color: var(--text); }
+
+  main { max-width: 1280px; margin: 0 auto; padding: 24px; display: grid; gap: 16px; transition: opacity .15s; }
+  body.loading main { opacity: .55; }
+  .head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .head h1 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -.01em; overflow-wrap: anywhere; }
+  .head h1.mono { font: 600 17px/1.4 var(--mono); }
+  .head .path { color: var(--muted); font: 12.5px var(--mono); overflow-wrap: anywhere; width: 100%; }
+  .kpis { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 900px) { .kpis { grid-auto-flow: row; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); } }
+  .kpi { display: block; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
+  a.kpi:hover { border-color: var(--faint); }
+  .kpi .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  .kpi .value { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.25; margin-top: 2px; }
+  .kpi .sub { color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kpi .value.bad { color: var(--o-bu); } .kpi .value.warn { color: var(--o-na); } .kpi .value.good { color: var(--o-ok); }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+  .card > header { display: flex; align-items: baseline; gap: 10px; padding: 14px 16px 10px; flex-wrap: wrap; }
+  .card h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .card .sub { color: var(--muted); font-size: 12.5px; }
+  .card .more { margin-left: auto; color: var(--accent); font-size: 13px; }
+  .card .more:hover { text-decoration: underline; }
+  .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .stack { display: grid; gap: 16px; align-content: start; min-width: 0; }
+  @media (max-width: 960px) { .grid2 { grid-template-columns: minmax(0, 1fr); } .top { flex-wrap: wrap; } }
+
+  .rows .row { display: grid; grid-template-columns: var(--cols); gap: 12px; align-items: center; padding: 7px 16px;
+    border-top: 1px solid var(--border); min-height: 38px; }
+  .rows .row.head { color: var(--faint); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; border-top: 0;
+    min-height: 0; padding-top: 0; padding-bottom: 6px; }
+  .rows .row.on { background: var(--surface-2); box-shadow: inset 2px 0 var(--accent); }
+  a.row:hover { background: var(--surface-2); }
+  .rows > .row:last-child { border-radius: 0 0 10px 10px; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .mono { font-family: var(--mono); font-size: 12.5px; }
+  .trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .line { display: flex; gap: 8px; align-items: center; }
+  .dim { color: var(--muted); } .faint { color: var(--faint); }
+  .ph { color: var(--accent); }
+  .name b { font-weight: 600; } .name .dim { margin-left: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; background: var(--o, var(--o-bu)); }
+  .o0 { --o: var(--o-ok); } .o1 { --o: var(--o-na); } .o2 { --o: var(--o-bu); } .o3 { --o: var(--o-cf); }
+  .tag { display: inline-flex; align-items: center; gap: 6px; padding: 1px 8px; border-radius: 999px; font-size: 12px;
+    background: var(--surface-2); border: 1px solid var(--border); white-space: nowrap; }
+  .tag.out { color: var(--o, var(--o-bu)); border-color: color-mix(in srgb, var(--o, var(--o-bu)) 45%, transparent);
+    background: color-mix(in srgb, var(--o, var(--o-bu)) 12%, transparent); }
+  .mix { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--surface-2); }
+  .mix span { display: block; background: var(--o); }
+  .rate { display: flex; align-items: center; gap: 8px; justify-content: flex-end; font-variant-numeric: tabular-nums; }
+  .rate .bar { width: 56px; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; flex: none; }
+  .rate .bar i { display: block; height: 100%; background: var(--o-bu); }
+  .rate .pct { min-width: 3.2em; text-align: right; }
+  .rate.zero { color: var(--faint); }
+
+  .chart { position: relative; padding: 0 16px 12px; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .chart .axis { fill: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .chart .grid { stroke: var(--border); }
+  .chart .hit { fill: transparent; }
+  .chart .hit:hover { fill: color-mix(in srgb, var(--text) 6%, transparent); }
+  .legend { display: flex; gap: 14px; color: var(--muted); font-size: 12.5px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  #tip { position: fixed; pointer-events: none; z-index: 10; display: none; min-width: 150px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; box-shadow: 0 8px 24px var(--shadow); }
+  #tip .t { font-weight: 600; margin-bottom: 4px; }
+  #tip .l { display: flex; align-items: center; gap: 8px; } #tip .l b { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+  pre.block { margin: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+    white-space: pre-wrap; overflow-wrap: anywhere; font: 12.5px/1.55 var(--mono); }
+  pre.block.err { border-left: 3px solid var(--o-bu); }
+  .pad { padding: 0 16px 16px; display: grid; gap: 12px; }
+  .cmd { display: flex; gap: 8px; align-items: flex-start; } .cmd pre { flex: 1; min-width: 0; }
+  .btn { all: unset; cursor: pointer; border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 13px;
+    background: var(--surface-2); white-space: nowrap; }
+  .btn:hover { border-color: var(--faint); }
+  .kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px 16px; padding: 0 16px 16px; margin: 0; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .kv a { color: var(--accent); } .kv a:hover { text-decoration: underline; }
+  .tabs { display: flex; gap: 4px; padding: 0 12px 10px; flex-wrap: wrap; }
+  .tabs a { padding: 3px 10px; border-radius: 6px; color: var(--muted); font-size: 13px; display: inline-flex; gap: 6px; align-items: center; }
+  .tabs a:hover { color: var(--text); }
+  .tabs a[aria-current=page] { background: var(--surface-2); color: var(--text); }
+  .empty { padding: 18px 16px; color: var(--muted); }
+  .foot { padding: 10px 16px; border-top: 1px solid var(--border); }
+  .foot:empty { display: none; }
+  .error { color: var(--o-bu); padding: 16px; }
 </style>
 </head>
 <body>
-<h1>catnip stats</h1>
-<div class="bar">
-  <label>period <select id="days">
-    <option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option>
-    <option value="90">90 days</option><option value="0">all</option>
-  </select></label>
-  <span id="filters" class="bar"></span>
-</div>
-<div id="report"></div>
+<header class="top">
+  <a class="brand" href="#/">catnip<span>stats</span></a>
+  <nav class="crumbs" id="crumbs" aria-label="breadcrumbs"></nav>
+  <div class="seg" id="period" role="group" aria-label="period"></div>
+  <button class="icon" id="theme" title="switch theme" aria-label="switch theme">◐</button>
+</header>
+<main id="view"></main>
+<div id="tip"></div>
 
 <script>
+// Every screen is a hash route and every link a plain anchor, so back and forward work; data comes from /api/<view>.
 const outcomes = {0: 'ok', 1: 'not applied', 2: 'bad usage', 3: 'check failed'};
-const colors = {0: '#4caf50', 1: '#ff9800', 2: '#e53935', 3: '#8e24aa'};
-const outcome = c => outcomes[c] ?? `exit ${c}`;
-const filters = ['project', 'worktree', 'kind', 'code', 'file', 'group'];
+const outName = c => outcomes[c] ?? `exit ${c}`;
+const periods = [['1', '24h'], ['7', '7 days'], ['30', '30 days'], ['90', '90 days'], ['0', 'all time']];
 const pageSize = 100; // stats.PageSize
-const local = t => t ? new Date(t).toLocaleString() : '';
-let chart, seq = 0; // seq drops the answers of a render a newer one replaced
+let period = localStorage.getItem('catnip.period') || '30';
+let seq = 0, lastHash = null;
 
-// The page state is the hash: the period and the filters.
-const state = () => {
-  const s = new URLSearchParams(location.hash.slice(1));
-  if (!s.has('days')) s.set('days', '30');
-  return s;
+const view = document.getElementById('view'), tip = document.getElementById('tip');
+const enc = encodeURIComponent;
+const qs = o => {
+  const q = new URLSearchParams(Object.entries(o || {}).filter(([, v]) => v != null && v !== ''));
+  return q.size ? '?' + q : '';
 };
-function go(changes) {
-  const s = state();
-  for (const [k, v] of Object.entries(changes)) v == null ? s.delete(k) : s.set(k, v);
-  location.hash = s.toString();
-}
+const go = {
+  project: (p, worktree) => `#/project/${enc(p)}` + qs({worktree}),
+  error: (g, scope) => `#/error/${enc(g)}` + qs({project: scope?.project}),
+  command: (k, scope) => `#/command/${enc(k)}` + qs({project: scope?.project}),
+  file: f => `#/file/${enc(f)}`,
+  call: id => `#/call/${id}`,
+  calls: scope => '#/calls' + qs(scope),
+  errors: scope => '#/errors' + qs({project: scope?.project}),
+};
 
-function el(tag, attrs, ...children) {
+function h(tag, attrs, ...kids) {
   const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs || {})) k.startsWith('on') ? e[k] = v : e.setAttribute(k, v);
-  for (const c of children) e.append(c instanceof Node ? c : String(c ?? ''));
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k.startsWith('on')) e[k] = v;
+    else if (k === 'style') e.style.cssText = v;
+    else e.setAttribute(k, v);
+  }
+  for (const c of kids.flat(Infinity)) if (c != null && c !== false) e.append(c instanceof Node ? c : String(c));
   return e;
 }
-// link sets filters on click.
-const link = (text, changes) => el('a', {class: 'go', onclick: e => { e.stopPropagation(); go(changes); }}, text);
-// pick makes a row set filters on click, unless value is empty: an empty filter matches every call.
-const pick = (value, changes) => value ? {class: 'go', onclick: () => go(changes)} : {};
-const num = (n, attrs) => el('td', {class: 'n', ...attrs}, n ?? 0);
-const table = (head, rows) => el('table', {}, el('tr', {}, ...head.map(h => el('th', {}, h))), ...rows);
-
-// rel is path from base when it lies below it.
-function rel(path, base) {
-  if (!path || !base || path === base) return path;
-  for (const sep of ['/', '\\']) if (path.startsWith(base + sep)) return path.slice(base.length + 1);
-  return path;
+function svg(tag, attrs, ...kids) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs || {})) if (k.startsWith('on')) e[k] = v; else e.setAttribute(k, v);
+  e.append(...kids);
+  return e;
 }
 
-const shq = a => /^[\w@%+=:,./#-]+$/.test(a) ? a : "'" + a.replaceAll("'", "'\\''") + "'";
-
-async function api(view, extra) {
-  const s = state(), q = new URLSearchParams();
-  for (const k of ['days', ...filters]) if (s.has(k)) q.set(k, s.get(k));
-  for (const [k, v] of Object.entries(extra || {})) q.set(k, v);
+async function api(view, filter) {
+  const q = new URLSearchParams({days: period});
+  for (const [k, v] of Object.entries(filter || {})) if (v != null && v !== '') q.set(k, v);
   const r = await fetch(`api/${view}?${q}`);
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
 
+// ---- formatting
+
+const fmt = n => (n ?? 0).toLocaleString('en');
+const pct = (a, b) => b ? Math.round(100 * a / b) + '%' : '—';
+const local = t => t ? new Date(t).toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'}) : '';
+function ago(t) {
+  if (!t) return '—';
+  const s = (Date.now() - new Date(t)) / 1000;
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 30 * 86400) return `${Math.floor(s / 86400)}d ago`;
+  return new Date(t).toLocaleDateString();
+}
+const when = t => h('span', {title: local(t)}, ago(t));
+// stamp is a time for lists: the clock today, the date and the clock before.
+const stamp = t => {
+  const d = new Date(t), clock = d.toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'});
+  return ymd(d) === ymd(new Date()) ? clock : `${d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})} ${clock}`;
+};
+const base = p => p ? p.split(/[\\/]/).filter(Boolean).pop() || p : '';
+const dir = p => p ? p.slice(0, p.length - base(p).length).replace(/[\\/]$/, '') : '';
+function rel(path, root) {
+  if (!path || !root) return path;
+  if (path === root) return '';
+  for (const s of ['/', '\\']) if (path.startsWith(root + s)) return path.slice(root.length + 1);
+  return path;
+}
+const shq = a => /^[\w@%+=:,./#-]+$/.test(a) ? a : "'" + a.replaceAll("'", "'\\''") + "'";
+const firstLine = s => (s || '').split('\n')[0];
+const periodName = () => period === '1' ? 'the last 24h' : periods.find(p => p[0] === period)[1];
+
+// ---- pieces
+
+const dot = c => h('span', {class: `dot o${c}`, title: outName(c)});
+const outTag = c => h('span', {class: `tag out o${c}`}, outName(c));
+const name = (p, hint) => h('span', {class: 'name trunc', title: p}, h('b', {}, base(p)), h('span', {class: 'dim'}, hint ?? dir(p)));
+function rate(failed, calls) {
+  return h('span', {class: 'rate' + (failed ? '' : ' zero')},
+    h('span', {class: 'bar'}, h('i', {style: `width:${calls ? Math.round(100 * failed / calls) : 0}%`})), h('span', {class: 'pct'}, pct(failed, calls)));
+}
+function mix(codes) {
+  const total = Object.values(codes).reduce((a, b) => a + b, 0) || 1;
+  return h('span', {class: 'mix', title: Object.entries(codes).map(([c, n]) => `${outName(c)}: ${n}`).join(', ')},
+    Object.entries(codes).map(([c, n]) => h('span', {class: `o${c}`, style: `width:${100 * n / total}%`})));
+}
+function card(title, body, opts = {}) {
+  return h('section', {class: 'card'},
+    h('header', {}, h('h3', {}, title), opts.sub && h('span', {class: 'sub'}, opts.sub),
+      opts.more && h('a', {class: 'more', href: opts.more[1]}, opts.more[0] + ' →')),
+    body);
+}
+function table(cols, head, items, empty = 'Nothing in this period') {
+  if (!items.length) return h('div', {class: 'empty'}, empty);
+  return h('div', {class: 'rows', style: `--cols:${cols}`},
+    h('div', {class: 'row head'}, head.map((x, i) => h('span', {class: /\b(num|rate)\b/.test(items[0].cells[i]?.className) ? 'num' : ''}, x))),
+    items.map(i => h(i.href ? 'a' : 'div', {class: 'row' + (i.on ? ' on' : ''), href: i.href}, i.cells)));
+}
+function kpis(items) {
+  return h('div', {class: 'kpis'}, items.map(k => h(k.href ? 'a' : 'div', {class: 'kpi', href: k.href},
+    h('div', {class: 'label'}, k.label), h('div', {class: 'value ' + (k.tone || '')}, k.value), h('div', {class: 'sub'}, k.sub || ''))));
+}
+const tone = (failed, calls) => !calls ? '' : failed / calls >= .25 ? 'bad' : failed / calls >= .1 ? 'warn' : 'good';
+const head = (title, path, extra, mono) =>
+  h('div', {class: 'head'}, h('h1', {class: mono ? 'mono' : ''}, title), extra, path && h('div', {class: 'path'}, path));
+const legend = () => h('div', {class: 'legend'}, [0, 1, 2, 3].map(c => h('span', {}, dot(c), outName(c))));
+// cols lays cards out in two independent columns, so a short card does not leave a hole under it.
+const cols = (left, right) => h('div', {class: 'grid2'}, h('div', {class: 'stack'}, left), h('div', {class: 'stack'}, right));
+
+// ---- chart: calls per local day, stacked by outcome
+
+function dayChart(rows) {
+  const box = h('div', {class: 'chart'});
+  box.draw = () => drawDays(box, rows); // drawn once in the page, when its width is known
+  return box;
+}
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const addDay = (s, n) => { const [y, m, d] = s.split('-').map(Number); return ymd(new Date(y, m - 1, d + n)); };
+const dayLabel = (d, o) => new Date(d + 'T12:00').toLocaleDateString(undefined, o || {month: 'short', day: 'numeric'});
+function drawDays(box, rows) {
+  const byDay = new Map();
+  for (const r of rows) {
+    if (!byDay.has(r.day)) byDay.set(r.day, {});
+    byDay.get(r.day)[r.code] = r.calls;
+  }
+  const seen = [...byDay.keys()].sort();
+  if (!seen.length) return box.replaceChildren(h('div', {class: 'empty'}, 'No calls in this period'));
+  const today = ymd(new Date());
+  let start = period === '0' ? seen[0] : addDay(today, 1 - Number(period));
+  if (seen[0] < start) start = seen[0];
+  const days = [];
+  for (let d = start; d <= today && days.length < 1000; d = addDay(d, 1)) days.push(d);
+  const codes = [...new Set(rows.map(r => r.code))].sort((a, b) => a - b);
+  const css = getComputedStyle(document.documentElement);
+  const color = c => css.getPropertyValue(['--o-ok', '--o-na', '--o-bu', '--o-cf'][c] || '--o-bu');
+  const W = Math.max(300, box.clientWidth - 32), H = 190, L = 34, B = 20, T = 6;
+  const total = d => Object.values(byDay.get(d) || {}).reduce((a, b) => a + b, 0);
+  const peak = Math.max(1, ...days.map(total));
+  const step = Math.pow(10, Math.floor(Math.log10(peak))), top = Math.ceil(peak / step) * step;
+  const y = v => T + (H - T - B) * (1 - v / top), bw = (W - L) / days.length;
+  const g = svg('svg', {viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': 'calls per day'});
+  for (const v of [0, top / 2, top]) {
+    g.append(svg('line', {class: 'grid', x1: L, x2: W, y1: y(v), y2: y(v)}));
+    g.append(svg('text', {class: 'axis', x: L - 6, y: y(v) + 4, 'text-anchor': 'end'}, String(Math.round(v))));
+  }
+  const every = Math.ceil(days.length / Math.max(1, Math.floor((W - L) / 64)));
+  days.forEach((d, i) => {
+    const x = L + i * bw, w = Math.max(1, Math.min(bw * .72, 28));
+    let acc = 0;
+    for (const c of codes) {
+      const n = (byDay.get(d) || {})[c] || 0;
+      if (!n) continue;
+      g.append(svg('rect', {x: x + (bw - w) / 2, y: y(acc + n), width: w, height: Math.max(1, y(acc) - y(acc + n)), rx: 1.5, fill: color(c)}));
+      acc += n;
+    }
+    if ((days.length - 1 - i) % every === 0) g.append(svg('text', {class: 'axis', x: x + bw / 2, y: H - 4, 'text-anchor': 'middle'}, dayLabel(d)));
+    g.append(svg('rect', {class: 'hit', x, y: T, width: bw, height: H - T - B,
+      onmousemove: e => showTip(e, d, byDay.get(d) || {}), onmouseleave: () => tip.style.display = 'none'}));
+  });
+  box.replaceChildren(g);
+}
+function showTip(e, day, counts) {
+  tip.replaceChildren(
+    h('div', {class: 't'}, dayLabel(day, {weekday: 'short', month: 'short', day: 'numeric'})),
+    h('div', {class: 'l'}, 'calls', h('b', {}, fmt(Object.values(counts).reduce((a, b) => a + b, 0)))),
+    Object.entries(counts).map(([c, n]) => h('div', {class: 'l'}, dot(c), outName(c), h('b', {}, fmt(n)))));
+  tip.style.display = 'block';
+  tip.style.left = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8) + 'px';
+  tip.style.top = (e.clientY + 14) + 'px';
+}
+
+// ---- lists
+
+function byKind(usage) {
+  const m = new Map();
+  for (const r of usage) {
+    if (!m.has(r.kind)) m.set(r.kind, {kind: r.kind, calls: 0, failed: 0, codes: {}});
+    const k = m.get(r.kind);
+    k.calls += r.calls;
+    if (r.code) k.failed += r.calls;
+    k.codes[r.code] = r.calls;
+  }
+  return [...m.values()].sort((a, b) => b.calls - a.calls);
+}
+const commandList = (usage, scope) => table('minmax(0,1.3fr) minmax(70px,1fr) 56px 104px', ['command', 'outcome mix', 'calls', 'failed'],
+  byKind(usage).map(k => ({href: k.kind ? go.command(k.kind, scope) : null, cells: [
+    h('span', {class: 'mono trunc'}, k.kind || '(no command)'), mix(k.codes), h('span', {class: 'num'}, fmt(k.calls)), rate(k.failed, k.calls)]})));
+// groupText shows the masked parts of an error group dimmed, so the fixed words read first.
+const groupText = g => g ? g.split(/(<\w+>)/).map((s, i) => i % 2 ? h('span', {class: 'ph'}, s) : s) : '(no message)';
+const errorCell = e => h('span', {class: 'line trunc'}, dot(e.code), h('span', {class: 'mono trunc', title: e.group}, groupText(e.group)));
+const errorList = (errors, scope, limit) => table('minmax(0,1fr) 56px 76px', ['error', 'calls', 'last'],
+  errors.slice(0, limit).map(e => ({href: e.group ? go.error(e.group, scope) : null, cells: [
+    errorCell(e), h('span', {class: 'num'}, fmt(e.calls)), h('span', {class: 'num dim'}, when(e.last))]})), 'No errors in this period');
+const projectList = projects => table('minmax(0,1fr) 64px 104px 76px', ['project', 'calls', 'failed', 'last'],
+  projects.map(p => ({href: go.project(p.project), cells: [
+    h('span', {class: 'line trunc'}, name(p.project), p.worktrees > 1 && h('span', {class: 'tag'}, `${p.worktrees} trees`)),
+    h('span', {class: 'num'}, fmt(p.calls)), rate(p.failed, p.calls), h('span', {class: 'num dim'}, when(p.last))]})));
+// where is a file's directory in its working tree, after the worktree's name when it is not the main tree.
+const where = (file, tree, project) => [tree !== project && base(tree), rel(dir(file), tree)].filter(Boolean).join(' · ');
+const fileList = (files, inProject) => table('minmax(0,1fr) 56px 104px 76px', ['file', 'calls', 'failed', 'last'],
+  files.map(f => {
+    const tree = f.worktree || f.project;
+    return {href: go.file(f.file), cells: [
+      name(f.file, inProject ? where(f.file, tree, f.project) : [base(f.project), where(f.file, tree, f.project)].filter(Boolean).join(' · ')),
+      h('span', {class: 'num'}, fmt(f.calls)), rate(f.failed, f.calls), h('span', {class: 'num dim'}, when(f.last))]};
+  }));
+const callFile = c => {
+  if (!c.file) return h('span', {class: 'faint'}, '—');
+  const tree = c.worktree || c.project;
+  return h('span', {class: 'name trunc', title: c.file}, rel(c.file, tree), tree !== c.project && h('span', {class: 'dim'}, base(tree)));
+};
+const callList = (calls, current, compact) => table(compact ? '10px 96px minmax(80px,.8fr) minmax(0,1fr)' : '10px 110px minmax(80px,.6fr) minmax(0,1fr) minmax(0,1.4fr)',
+  compact ? ['', 'when', 'command', 'file'] : ['', 'when', 'command', 'file', 'error'],
+  calls.map(c => ({href: go.call(c.id), on: c.id === current, cells: [
+    dot(c.code), h('span', {class: 'dim trunc', title: local(c.time)}, stamp(c.time)), h('span', {class: 'mono trunc', title: firstLine(c.error) || null}, c.kind || '(none)'),
+    callFile(c), !compact && h('span', {class: 'mono trunc dim', title: firstLine(c.error)}, firstLine(c.error))]})), 'No calls in this period');
+function treeList(trees, project) {
+  return table('minmax(0,1fr) minmax(0,.7fr) 112px 56px 104px', ['working tree', 'branch', 'config', 'calls', 'failed'],
+    trees.map(w => {
+      const main = w.worktree === project;
+      const cfg = !w.config ? h('span', {class: 'faint'}, 'none')
+        : h('span', {class: 'tag', title: w.config}, main || rel(w.config, w.worktree) !== w.config ? 'own' : 'from main tree');
+      return {href: w.worktree ? go.project(project, main ? null : w.worktree) : null, cells: [
+        w.worktree ? h('span', {class: 'line trunc'}, name(w.worktree, w.worktree), h('span', {class: 'tag'}, main ? 'main' : 'worktree'))
+          : h('span', {class: 'faint'}, 'outside git'),
+        h('span', {class: 'mono trunc dim'}, w.branch || '—'), h('span', {}, cfg), h('span', {class: 'num'}, fmt(w.calls)), rate(w.failed, w.calls)]};
+    }));
+}
+const summaryKpis = (s, scope, extra = []) => kpis([
+  {label: 'calls', value: fmt(s.calls), sub: `in ${periodName()}`, href: go.calls(scope)},
+  {label: 'failure rate', value: pct(s.failed, s.calls), tone: tone(s.failed, s.calls), sub: `${fmt(s.failed)} failed calls`, href: go.calls({...scope, code: 'failed'})},
+  ...extra,
+  {label: 'distinct errors', value: fmt(s.groups), sub: 'error groups', href: go.errors(scope)},
+  {label: 'files', value: fmt(s.files), sub: 'shown or edited'},
+]);
+const projectCrumbs = (p, wt) => [[base(p), go.project(p)], wt && wt !== p && [base(wt), go.project(p, wt)]];
+
+// ---- pages: each returns breadcrumbs and the body
+
+const pages = {
+  async home() {
+    const [[s], days, projects, errors, usage, files] = await Promise.all(
+      [api('summary'), api('days'), api('projects'), api('errors'), api('usage'), api('files')]);
+    return {crumbs: [], body: [
+      summaryKpis(s, {}, [{label: 'projects', value: fmt(s.projects), sub: `${fmt(s.worktrees)} working trees`}]),
+      card('Calls per day', dayChart(days), {sub: legend()}),
+      cols([
+        card('Projects', projectList(projects)),
+        card('Commands', commandList(usage, {})),
+      ], [
+        card('Top errors', errorList(errors, {}, 8), {sub: `${Math.min(8, errors.length)} of ${errors.length}`, more: errors.length > 8 && ['all errors', go.errors()]}),
+        card('Files', fileList(files.slice(0, 7)), {sub: `top ${Math.min(7, files.length)} of ${fmt(s.files)} by calls`}),
+      ]),
+    ]};
+  },
+
+  async project(r) {
+    const p = r.arg, wt = r.q.worktree, scope = {project: p, worktree: wt};
+    const [[s], days, trees, usage, errors, files, calls] = await Promise.all([api('summary', scope), api('days', scope),
+      api('worktrees', {project: p}), api('usage', scope), api('errors', scope), api('files', scope), api('calls', scope)]);
+    const tree = trees.find(t => t.worktree === (wt || p));
+    return {crumbs: projectCrumbs(p, wt), body: [
+      head(wt ? base(wt) : base(p), wt || p, tree?.branch && h('span', {class: 'tag mono'}, tree.branch)),
+      summaryKpis(s, scope, wt ? [] : [{label: 'working trees', value: fmt(s.worktrees), sub: 'main tree and worktrees'}]),
+      card('Calls per day', dayChart(days), {sub: legend()}),
+      !wt && card('Working trees', treeList(trees, p), {sub: 'every checkout of the repository'}),
+      cols([
+        card('Commands', commandList(usage, scope)),
+        card('Files', fileList(files.slice(0, 12), true), {sub: `top ${Math.min(12, files.length)} of ${fmt(s.files)} by calls`}),
+      ], [
+        card('Errors', errorList(errors, scope, 8), {sub: `${Math.min(8, errors.length)} of ${errors.length}`, more: errors.length > 8 && ['all errors', go.errors(scope)]}),
+        card('Recent calls', callList(calls.slice(0, 12), null, true), {more: ['all calls', go.calls(scope)]}),
+      ]),
+    ]};
+  },
+
+  async error(r) {
+    const g = r.arg, p = r.q.project, scope = {project: p, group: g};
+    const [[s], days, projects, usage, files, calls] = await Promise.all([api('summary', scope), api('days', scope),
+      api('projects', scope), api('usage', scope), api('files', scope), api('calls', scope)]);
+    const last = calls[0];
+    return {crumbs: [p && [base(p), go.project(p)], ['errors', go.errors({project: p})], ['error']], body: [
+      head(groupText(g), null, last && outTag(last.code), true),
+      last && card('Latest occurrence', callDetail(last),
+        {sub: [local(last.time), last.file && ' · ' + rel(last.file, last.worktree || last.project)].filter(Boolean).join(''), more: ['open call', go.call(last.id)]}),
+      kpis([
+        {label: 'occurrences', value: fmt(s.calls), sub: `in ${periodName()}`, href: go.calls(scope)},
+        {label: 'projects', value: fmt(s.projects), sub: `${fmt(s.worktrees)} working trees`},
+        {label: 'files', value: fmt(s.files)},
+        {label: 'first seen', value: ago(s.first), sub: local(s.first)},
+        {label: 'last seen', value: ago(s.last), sub: local(s.last)},
+      ]),
+      card('Occurrences per day', dayChart(days)),
+      cols([
+        card('Commands', commandList(usage, {project: p})),
+        !p && card('Projects', projectList(projects)),
+      ], [
+        card('Files', fileList(files.slice(0, 12), !!p), {sub: `top ${Math.min(12, files.length)} of ${fmt(s.files)}`}),
+      ]),
+      card('Calls', callList(calls.slice(0, 25)), {more: calls.length > 25 && ['all calls', go.calls(scope)]}),
+    ]};
+  },
+
+  async command(r) {
+    const k = r.arg, p = r.q.project, scope = {project: p, kind: k};
+    const [[s], days, usage, errors, files, calls] = await Promise.all([api('summary', scope), api('days', scope),
+      api('usage', scope), api('errors', scope), api('files', scope), api('calls', scope)]);
+    const codes = byKind(usage)[0]?.codes || {};
+    return {crumbs: [p && [base(p), go.project(p)], [k]], body: [
+      head('catnip ' + k, p, null, true),
+      kpis([
+        {label: 'calls', value: fmt(s.calls), sub: `in ${periodName()}`, href: go.calls(scope)},
+        {label: 'failure rate', value: pct(s.failed, s.calls), tone: tone(s.failed, s.calls), sub: `${fmt(s.failed)} failed calls`, href: go.calls({...scope, code: 'failed'})},
+        ...Object.entries(codes).filter(([c]) => c !== '0').map(([c, n]) =>
+          ({label: outName(c), value: fmt(n), sub: `${pct(n, s.calls)} of calls`, href: go.calls({...scope, code: c})})),
+        {label: 'projects', value: fmt(s.projects), sub: `${fmt(s.files)} files`},
+      ]),
+      card('Calls per day', dayChart(days), {sub: legend()}),
+      h('div', {class: 'grid2'},
+        card('Errors', errorList(errors, {project: p}, 10), {sub: 'of this command'}),
+        card('Files', fileList(files.slice(0, 10), !!p))),
+      card('Recent calls', callList(calls.slice(0, 20)), {more: ['all calls', go.calls(scope)]}),
+    ]};
+  },
+
+  async file(r) {
+    const f = r.arg, scope = {file: f};
+    const [[s], usage, errors, calls] = await Promise.all([api('summary', scope), api('usage', scope), api('errors', scope), api('calls', scope)]);
+    const c = calls[0];
+    return {crumbs: [...(c ? projectCrumbs(c.project, c.worktree) : []), [base(f)]], body: [
+      head(base(f), f),
+      kpis([
+        {label: 'calls', value: fmt(s.calls), sub: `in ${periodName()}`, href: go.calls(scope)},
+        {label: 'failure rate', value: pct(s.failed, s.calls), tone: tone(s.failed, s.calls), sub: `${fmt(s.failed)} failed calls`, href: go.calls({...scope, code: 'failed'})},
+        {label: 'distinct errors', value: fmt(s.groups)},
+        {label: 'last call', value: ago(s.last), sub: local(s.last)},
+      ]),
+      h('div', {class: 'grid2'}, card('Commands', commandList(usage, {})), card('Errors', errorList(errors, {project: c?.project}, 10))),
+      card('History', callList(calls), {sub: 'every call on this file, newest first', more: calls.length >= pageSize && ['all calls', go.calls(scope)]}),
+    ]};
+  },
+
+  async call(r) {
+    const [c] = await api('calls', {id: r.arg, days: '0'});
+    if (!c) return {crumbs: [['call']], body: [h('div', {class: 'card empty'}, 'No such call')]};
+    let near = c.file ? await api('calls', {file: c.file, days: '0'}) : [];
+    if (c.file && !near.some(n => n.id === c.id)) near = await api('calls', {file: c.file, days: '0', before: c.id + 1});
+    const at = near.findIndex(n => n.id === c.id);
+    near = near.slice(Math.max(0, at - 10), at + 11);
+    return {crumbs: [...projectCrumbs(c.project, c.worktree), [`call ${c.id}`]], body: [
+      head('catnip ' + (c.kind || ''), null, [outTag(c.code), h('span', {class: 'dim'}, local(c.time))], true),
+      card('Call', callDetail(c, true)),
+      c.file && card('Same file', callList(near, c.id), {sub: 'calls on this file around this one', more: ['file history', go.file(c.file)]}),
+    ]};
+  },
+
+  async calls(r) {
+    const scope = {project: r.q.project, worktree: r.q.worktree, kind: r.q.kind, group: r.q.group, file: r.q.file};
+    const [calls, usage] = await Promise.all([api('calls', {...scope, code: r.q.code}), api('usage', scope)]);
+    const counts = {};
+    for (const u of usage) counts[u.code] = (counts[u.code] || 0) + u.calls;
+    const all = Object.values(counts).reduce((a, b) => a + b, 0), failed = all - (counts[0] || 0);
+    const tab = (code, label, n) => h('a', {href: go.calls({...scope, code}), 'aria-current': (r.q.code || '') === code ? 'page' : null},
+      label, h('span', {class: 'faint'}, fmt(n)));
+    const list = callList(calls), foot = h('div', {class: 'foot'});
+    const more = rows => {
+      foot.replaceChildren();
+      if (rows.length < pageSize) return;
+      const b = h('button', {class: 'btn', onclick: async () => {
+        b.disabled = true;
+        b.textContent = 'loading…';
+        try {
+          const next = await api('calls', {...scope, code: r.q.code, before: rows[rows.length - 1].id});
+          list.append(...callList(next).querySelectorAll('.row:not(.head)'));
+          more(next);
+        } catch (e) {
+          foot.replaceChildren(h('span', {class: 'error'}, e.message));
+        }
+      }}, 'load older');
+      foot.append(b);
+    };
+    more(calls);
+    const what = [scope.kind && 'catnip ' + scope.kind, scope.worktree && base(scope.worktree), scope.file && base(scope.file)].filter(Boolean);
+    return {crumbs: [...(r.q.project ? projectCrumbs(r.q.project, r.q.worktree) : []), ['calls']], body: [
+      head(['Calls', ...what].join(' · '), scope.group || scope.file, null, !!scope.group),
+      card('', [h('nav', {class: 'tabs'}, tab('', 'all', all), failed && tab('failed', 'failed', failed),
+        Object.keys(counts).filter(c => c !== '0').map(c => tab(c, [dot(c), outName(c)], counts[c]))), list, foot]),
+    ]};
+  },
+
+  async errors(r) {
+    const p = r.q.project, errors = await api('errors', {project: p});
+    return {crumbs: [p && [base(p), go.project(p)], ['errors']], body: [
+      head('Errors', p),
+      card('Error groups', table('minmax(0,1fr) 56px 64px 56px 76px 76px', ['error', 'calls', 'projects', 'files', 'first', 'last'],
+        errors.map(e => ({href: e.group ? go.error(e.group, {project: p}) : null, cells: [
+          errorCell(e), h('span', {class: 'num'}, fmt(e.calls)), h('span', {class: 'num dim'}, fmt(e.projects)),
+          h('span', {class: 'num dim'}, fmt(e.files)), h('span', {class: 'num dim'}, when(e.first)), h('span', {class: 'num dim'}, when(e.last))]})),
+        'No errors in this period'), {sub: 'one message with its paths, quoted text and numbers masked'}),
+    ]};
+  },
+};
+
+function callDetail(c, full) {
+  const argv = c.argv ? JSON.parse(c.argv) : null;
+  const cmd = argv ? `cd ${shq(c.cwd)} && catnip ${argv.map(shq).join(' ')}` : '';
+  const copy = h('button', {class: 'btn', onclick: () => navigator.clipboard.writeText(cmd)
+    .then(() => copy.textContent = 'copied', () => copy.textContent = 'copy failed')}, 'copy');
+  const kv = (k, v) => v ? [h('dt', {}, k), h('dd', {}, v)] : [];
+  return h('div', {},
+    h('div', {class: 'pad'},
+      argv ? h('div', {class: 'cmd'}, h('pre', {class: 'block'}, cmd), copy) : h('div', {class: 'dim'}, 'argv dropped: the database outgrew its limit'),
+      c.error && h('pre', {class: 'block err'}, c.error)),
+    full && h('dl', {class: 'kv'},
+      kv('error group', c.group && h('a', {href: go.error(c.group, {project: c.project})}, c.group)),
+      kv('project', h('a', {href: go.project(c.project)}, c.project)),
+      kv('worktree', c.worktree && c.worktree !== c.project && h('a', {href: go.project(c.project, c.worktree)}, c.worktree)),
+      kv('branch', c.branch && h('span', {class: 'mono'}, c.branch)),
+      kv('file', c.file && h('a', {href: go.file(c.file)}, c.file)),
+      kv('cwd', h('span', {class: 'mono'}, c.cwd)),
+      kv('config', c.config ? h('span', {class: 'mono'}, c.config) : h('span', {class: 'faint'}, 'none'))));
+}
+
+// ---- shell
+
+function route() {
+  const [path, query] = location.hash.replace(/^#\/?/, '').split('?');
+  const [page, arg] = path.split('/').map(decodeURIComponent);
+  return {page: pages[page] ? page : 'home', arg, q: Object.fromEntries(new URLSearchParams(query || ''))};
+}
+
 async function render() {
-  const s = state();
-  document.getElementById('days').value = s.get('days');
-  document.getElementById('filters').replaceChildren(...filters.filter(k => s.has(k)).map(k => el('span', {class: 'chip'},
-    `${k}: ${k === 'code' ? (s.get(k) === 'failed' ? 'failed' : outcome(s.get(k))) : s.get(k) || '(none)'}`,
-    el('button', {title: 'remove', onclick: () => go({[k]: null})}, '×'))));
-  const project = s.get('project');
-  const root = document.getElementById('report');
-  const my = ++seq;
-  let days, places, usage, errors, calls;
+  const my = ++seq, r = route();
+  document.body.classList.add('loading');
+  let out;
   try {
-    [days, places, usage, errors, calls] = await Promise.all([
-      api('days'), api(project ? 'worktrees' : 'projects'), api('usage'), api('errors'), api('calls')]);
+    out = await pages[r.page](r);
   } catch (e) {
-    if (my === seq) root.replaceChildren(el('p', {class: 'err'}, e.message));
-    return;
+    out = {crumbs: [], body: [h('div', {class: 'card error'}, e.message)]};
   }
   if (my !== seq) return;
-  const total = places.reduce((n, r) => n + r.calls, 0), failed = places.reduce((n, r) => n + r.failed, 0);
-  root.replaceChildren(
-    el('p', {}, `calls: ${total}, failed: ${failed}` + (total ? ` (${Math.round(100 * failed / total)}%)` : '')),
-    el('h2', {}, 'Calls by day'), el('div', {class: 'chart'}, el('canvas', {id: 'days-chart'})),
-    ...(project ? worktrees(places, project) : projects(places)),
-    el('h2', {}, 'Usage'), usageTable(usage),
-    el('h2', {}, 'Errors'), errorsTable(errors),
-    el('h2', {}, 'Calls'), feed(calls));
-  daysChart(days);
+  document.body.classList.remove('loading');
+  const crumbs = [['overview', r.page === 'home' ? null : '#/'], ...out.crumbs.filter(Boolean)];
+  document.getElementById('crumbs').replaceChildren(...crumbs.flatMap(([label, href], i) => [
+    i ? h('span', {class: 'sep'}, '/') : null,
+    href && i < crumbs.length - 1 ? h('a', {href}, label) : h('span', {class: 'here'}, label)]).filter(Boolean));
+  document.title = ['catnip stats', ...crumbs.slice(1).map(c => c[0])].join(' · ');
+  view.replaceChildren(...out.body.filter(Boolean));
+  view.querySelectorAll(".chart").forEach(b => b.draw());
+  if (location.hash !== lastHash) scrollTo(0, 0);
+  lastHash = location.hash;
 }
 
-function daysChart(rows) {
-  if (chart) chart.destroy();
-  const canvas = document.getElementById('days-chart');
-  if (!window.Chart) {
-    canvas.replaceWith('Chart.js did not load from jsDelivr.');
-    return;
-  }
-  const labels = [...new Set(rows.map(r => r.day))], codes = [...new Set(rows.map(r => r.code))].sort();
-  chart = new Chart(canvas, {
-    type: 'bar',
-    data: {labels, datasets: codes.map(c => ({
-      label: outcome(c), backgroundColor: colors[c],
-      data: labels.map(d => (rows.find(r => r.day === d && r.code === c) || {calls: 0}).calls),
-    }))},
-    options: {animation: false, maintainAspectRatio: false, scales: {x: {stacked: true}, y: {stacked: true}}},
-  });
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem('catnip.theme', t);
 }
-
-function projects(rows) {
-  return [el('h2', {}, 'Projects'), table(['project', 'calls', 'failed', 'show', 'edit', 'write', 'last call'], rows.map(r =>
-    el('tr', {class: 'go', onclick: () => go({project: r.project})},
-      el('td', {}, r.project), num(r.calls),
-      num(r.failed, {class: 'n go', onclick: e => { e.stopPropagation(); go({project: r.project, code: 'failed'}); }}),
-      num(r.show), num(r.edit), num(r.write), el('td', {}, local(r.last)))))];
+setTheme(localStorage.getItem('catnip.theme') || 'dark');
+document.getElementById('theme').onclick = () => {
+  setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+  render();
+};
+const seg = document.getElementById('period');
+function drawPeriods() {
+  seg.replaceChildren(...periods.map(([v, label]) => h('button', {'aria-pressed': String(v === period), onclick: () => {
+    period = v;
+    localStorage.setItem('catnip.period', v);
+    drawPeriods();
+    render();
+  }}, label)));
 }
-
-function worktrees(rows, project) {
-  return [el('h2', {}, project), table(['worktree', 'branch', 'config', 'calls', 'failed', 'last call'], rows.map(r =>
-    el('tr', pick(r.worktree, {worktree: r.worktree}),
-      el('td', {}, r.worktree === project ? '(main)' : rel(r.worktree, project) || '(no git)'), el('td', {}, r.branch),
-      el('td', {}, rel(r.config, project) || el('span', {class: 'muted'}, 'none')),
-      num(r.calls), num(r.failed), el('td', {}, local(r.last)))))];
-}
-
-function usageTable(rows) {
-  const kinds = [...new Set(rows.map(r => r.kind))], codes = [...new Set(rows.map(r => r.code))].sort();
-  const count = (k, c) => (rows.find(r => r.kind === k && r.code === c) || {calls: 0}).calls;
-  return table(['command', ...codes.map(outcome), 'total', 'failed'], kinds.map(k => {
-    const all = codes.reduce((n, c) => n + count(k, c), 0), bad = all - count(k, 0);
-    return el('tr', {},
-      el('td', {}, k ? link(k, {kind: k}) : '(none)'),
-      ...codes.map(c => count(k, c) ? num(count(k, c), k ? {class: 'n go', onclick: () => go({kind: k, code: String(c)})} : {}) : num('')),
-      num(all), num(bad ? `${bad} (${Math.round(100 * bad / all)}%)` : ''));
-  }));
-}
-
-function errorsTable(rows) {
-  if (!rows.length) return el('p', {class: 'muted'}, 'none');
-  return table(['error', 'outcome', 'calls', 'last'], rows.map(r =>
-    el('tr', pick(r.group, {group: r.group}),
-      el('td', {}, el('pre', {}, r.group || '(no message)')), el('td', {}, outcome(r.code)), num(r.calls), el('td', {}, local(r.last)))));
-}
-
-function feed(rows) {
-  const t = table(['time', 'command', 'outcome', 'file', 'error'], []);
-  const more = el('button', {}, 'older');
-  const add = rows => {
-    for (const r of rows) {
-      const row = el('tr', {class: 'go'},
-        el('td', {}, local(r.time)), el('td', {}, r.kind), el('td', {class: r.code ? 'err' : ''}, outcome(r.code)),
-        el('td', {}, rel(r.file, r.worktree || r.project)), el('td', {}, el('pre', {}, r.error.split('\n')[0])));
-      let open;
-      row.onclick = () => {
-        if (open) {
-          open.remove();
-          open = null;
-          return;
-        }
-        open = el('tr', {class: 'card'}, el('td', {colspan: 5}, card(r)));
-        row.after(open);
-      };
-      t.append(row);
-    }
-    more.hidden = rows.length < pageSize;
-    more.disabled = false;
-    if (rows.length) more.onclick = () => {
-      more.disabled = true;
-      api('calls', {before: rows[rows.length - 1].id}).then(add, e => more.replaceWith(e.message));
-    };
-  };
-  add(rows);
-  return el('div', {}, rows.length ? t : el('p', {class: 'muted'}, 'none'), more);
-}
-
-function card(r) {
-  const argv = r.argv ? JSON.parse(r.argv) : null;
-  const cmd = argv ? `cd ${shq(r.cwd)} && catnip ${argv.map(shq).join(' ')}` : '';
-  const line = (name, ...value) => el('tr', {}, el('th', {}, name), el('td', {}, ...value));
-  return el('table', {},
-    line('time', local(r.time)),
-    line('outcome', outcome(r.code)),
-    line('command', argv ? el('pre', {}, cmd) : el('span', {class: 'muted'}, 'argv dropped: the database outgrew its limit'),
-      argv ? el('button', {onclick: e => { e.stopPropagation(); navigator.clipboard.writeText(cmd); }}, 'copy') : ''),
-    ...(r.error ? [line('error', el('pre', {}, r.error)), line('error group', r.group ? link(r.group, {group: r.group}) : '')] : []),
-    line('cwd', r.cwd),
-    line('file', r.file ? link(r.file, {file: r.file}) : ''),
-    line('project', link(r.project, {project: r.project})),
-    line('worktree', r.worktree ? link(r.worktree, {project: r.project, worktree: r.worktree}) : ''),
-    line('branch', r.branch),
-    line('config', r.config || el('span', {class: 'muted'}, 'none')));
-}
-
-document.getElementById('days').onchange = e => go({days: e.target.value});
-window.onhashchange = render;
+drawPeriods();
+let resized;
+addEventListener('resize', () => { clearTimeout(resized); resized = setTimeout(render, 200); });
+addEventListener('hashchange', render);
 render();
 </script>
 </body>
