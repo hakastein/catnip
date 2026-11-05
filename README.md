@@ -32,7 +32,8 @@ make build                                   # bin/catnip, статически�
 install -m 755 bin/catnip ~/.local/bin/catnip
 ```
 
-Скилл `skills/catnip/SKILL.md` копируется в каталог скиллов агента. Фиксеры и проверки идут через `sh`, на
+Скиллы `skills/catnip` и `skills/catnip-setup` копируются в каталог скиллов агента; по `catnip-setup` агент пишет
+`.catnip.json` проекта из его форматтеров и линтеров. Фиксеры и проверки идут через `sh`, на
 Windows — из Git for Windows в `PATH`.
 
 ## Конфиг
