@@ -1,12 +1,13 @@
 ---
 name: catnip
-description: "Use before any shell command that prints part of a file or writes one — sed -n/-i, cat -n, head/tail, heredoc, python."
+description: "Use for every file read or edit, by file tools or shell: cat, sed, head/tail, heredoc, python."
 ---
 
 # catnip
 
-`catnip` читает и правит файлы одной bash-командой и сцепляется через `&&`. Используй его вместо `sed -n`, `cat -n`,
-`sed -i`, heredoc в файл и python-скриптов с `str.replace`. Справка команды — `catnip <команда> --help`.
+`catnip` читает и правит файлы одной bash-командой и сцепляется через `&&`. Каждое чтение и каждая правка файла идут
+через него: вместо встроенных инструментов агента для чтения и правки файлов, `cat`, `sed -n`, `head`/`tail`, `sed -i`,
+heredoc в файл и python-скриптов с `str.replace`. Справка команды — `catnip <команда> --help`.
 
 ## Просмотр
 
