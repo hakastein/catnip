@@ -101,6 +101,9 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 		pos = append(pos, fl.Arg(0))
 		err = fl.Parse(fl.Args()[1:])
 	}
+	if err == nil && !slices.Contains(view.Gutters, *gutter) {
+		fmt.Fprintf(stderr, "--gutter %q: want hash, line or none\n", *gutter)
+	}
 	if err != nil || len(pos) != 1 || *context < 0 || !slices.Contains(view.Gutters, *gutter) {
 		fmt.Fprint(stderr, usage)
 		return badUsage

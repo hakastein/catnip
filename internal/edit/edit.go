@@ -11,8 +11,8 @@ import (
 	"github.com/pmezard/go-difflib/difflib"
 )
 
-// Op is one edit. The target is text (Old), whole lines (Lines) or a place between lines (Insert); an empty New
-// deletes the text or lines.
+// Op is one edit. The target is text (Old), whole lines (Lines) or a place between lines (Insert). An empty New
+// deletes the text or lines; with Insert it is one empty line.
 type Op struct {
 	// Old is the exact text to find.
 	Old string
@@ -152,7 +152,7 @@ func Apply(raw []byte, ops []Op) ([]byte, []Failure) {
 	var b strings.Builder
 	pos, owner, chop := 0, -1, false
 	for _, c := range changes {
-		if c.start < pos || chop && c.start == pos { // nothing follows a deleted unterminated last line
+		if c.start < pos {
 			f := Failure{c.op, fmt.Sprintf("overlaps edit %d", owner+1)}
 			if !slices.Contains(fails, f) { // every match of a --count edit overlaps alike
 				fails = append(fails, f)
@@ -160,6 +160,9 @@ func Apply(raw []byte, ops []Op) ([]byte, []Failure) {
 			continue
 		}
 		b.WriteString(text[pos:c.start])
+		if chop && c.start == pos { // an insertion after a deleted unterminated last line takes its place
+			c.text = strings.TrimPrefix(c.text, "\n")
+		}
 		b.WriteString(c.text)
 		pos, owner, chop = c.end, c.op, c.chop
 	}
@@ -235,7 +238,8 @@ func resolveLines(text string, op Op) ([]change, string) {
 }
 
 // resolveInsert puts New as whole lines after or before the anchor line. After an unterminated last line the new
-// lines go after a line break and the file still ends without one.
+// lines go after a line break and the file still ends without one, unless the last new line is empty: such a line
+// exists only with a line break after it.
 func resolveInsert(text string, op Op) ([]change, string) {
 	a := *op.Insert
 	lines := Lines(text)
@@ -249,6 +253,9 @@ func resolveInsert(text string, op Op) ([]change, string) {
 	}
 	at := offset(lines, a.Line+1)
 	if at > len(text) {
+		if newText == "" || strings.HasSuffix(newText, "\n") {
+			newText += "\n"
+		}
 		return []change{{start: len(text), end: len(text), text: "\n" + newText}}, ""
 	}
 	return []change{{start: at, end: at, text: newText + "\n"}}, ""

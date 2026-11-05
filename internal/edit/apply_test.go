@@ -338,10 +338,22 @@ func TestApply(t *testing.T) {
 			fails: fail(1, "overlaps edit 1"),
 		},
 		{
-			name:  "insert after a deleted unterminated last line",
-			file:  "a\nb",
-			ops:   []edit.Op{{Lines: lines(2, "b", 2, "b")}, {Insert: after(2, "b"), New: "y"}},
-			fails: fail(1, "overlaps edit 1"),
+			name: "insert after a deleted unterminated last line takes its place",
+			file: "a\nb",
+			ops:  []edit.Op{{Lines: lines(2, "b", 2, "b")}, {Insert: after(2, "b"), New: "y"}},
+			want: "a\ny",
+		},
+		{
+			name: "an empty line after an unterminated last line ends with a line break",
+			file: "a\nb",
+			ops:  []edit.Op{{Insert: after(2, "b"), New: "\n"}},
+			want: "a\nb\n\n",
+		},
+		{
+			name: "lines ending with an empty one after an unterminated last line",
+			file: "a\nb",
+			ops:  []edit.Op{{Insert: after(2, "b"), New: "x\n\n"}},
+			want: "a\nb\nx\n\n",
 		},
 		{
 			name: "insert into a CRLF file",

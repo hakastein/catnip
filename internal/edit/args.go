@@ -56,12 +56,12 @@ func ParseArgs(args []string) ([]Op, error) {
 			if i+2 >= len(args) {
 				return nil, fmt.Errorf("%s needs LINE#HASH and NEW", name)
 			}
+			if strings.Contains(args[i+1], "-") {
+				return nil, fmt.Errorf("%s: %q is a range, want one LINE#HASH", name, args[i+1])
+			}
 			r, err := parseRange(name, "LINE#HASH", args[i+1])
 			if err != nil {
 				return nil, err
-			}
-			if strings.Contains(args[i+1], "-") {
-				return nil, fmt.Errorf("%s: %q is a range, want one LINE#HASH", name, args[i+1])
 			}
 			if args[i+2] == "" {
 				return nil, fmt.Errorf("%s: empty NEW inserts nothing", name)
@@ -99,8 +99,11 @@ func parseRange(name, want, s string) (LineRange, error) {
 		}
 		r.ToHash = m[4]
 	}
-	if r.From < 1 || r.To < r.From {
-		return LineRange{}, fmt.Errorf("%s: %q: lines start at 1 and the range ends after it starts", name, s)
+	if r.From < 1 {
+		return LineRange{}, fmt.Errorf("%s: %q: lines start at 1", name, s)
+	}
+	if r.To < r.From {
+		return LineRange{}, fmt.Errorf("%s: %q: the range ends before it starts", name, s)
 	}
 	return r, nil
 }
