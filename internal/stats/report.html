@@ -10,86 +10,211 @@
   table { border-collapse: collapse; width: 100%; }
   th, td { border-bottom: 1px solid #ddd; padding: .3em .8em; text-align: left; vertical-align: top; }
   th { background: #f4f4f4; white-space: nowrap; }
-  td { white-space: pre-wrap; word-break: break-all; }
-  .chart { height: 320px; }
+  td { word-break: break-all; }
+  td.n { text-align: right; white-space: nowrap; word-break: normal; }
+  pre { white-space: pre-wrap; word-break: break-all; margin: 0; }
+  .chart { height: 260px; }
+  .go { cursor: pointer; }
+  tr.go:hover, td.go:hover, a.go:hover { background: #eef4ff; }
+  a.go { color: #0645ad; }
+  .bar { display: flex; gap: .5em; align-items: center; flex-wrap: wrap; }
+  .chip { background: #eef4ff; border: 1px solid #bcd; border-radius: 1em; padding: .1em .7em; }
+  .chip button { border: none; background: none; cursor: pointer; padding: 0 0 0 .3em; }
+  .card td { background: #fafafa; }
+  .card th { background: none; width: 8em; }
+  .muted { color: #777; }
+  .err { color: #b00; }
 </style>
 </head>
 <body>
 <h1>catnip stats</h1>
-<p id="summary"></p>
-
-<h2>Calls by day</h2>
-<div class="chart"><canvas id="days"></canvas></div>
-
-<h2>Projects</h2>
-<table id="projects"></table>
-
-<h2>Working directories</h2>
-<table id="dirs"></table>
-
-<h2>Exit codes</h2>
-<div class="chart"><canvas id="codes"></canvas></div>
-
-<h2>Flags</h2>
-<div class="chart"><canvas id="flags"></canvas></div>
-
-<h2>Last failed calls, codes 1 and 2</h2>
-<table id="failures"></table>
-
-<h2>Commands catnip does not have</h2>
-<table id="commands"></table>
+<div class="bar">
+  <label>period <select id="days">
+    <option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option>
+    <option value="90">90 days</option><option value="0">all</option>
+  </select></label>
+  <span id="filters" class="bar"></span>
+</div>
+<div id="report"></div>
 
 <script>
-const data = {{.}};
+const outcomes = {0: 'ok', 1: 'not applied', 2: 'bad usage', 3: 'check failed'};
+const colors = {0: '#4caf50', 1: '#ff9800', 2: '#e53935', 3: '#8e24aa'};
+const outcome = c => outcomes[c] ?? `exit ${c}`;
+const filters = ['project', 'worktree', 'kind', 'code', 'file', 'group'];
+const pageSize = 100; // stats.PageSize
 const local = t => t ? new Date(t).toLocaleString() : '';
+let chart;
 
-function table(id, head, rows) {
-  const t = document.getElementById(id);
-  const tr = (cells, tag) => {
-    const r = document.createElement('tr');
-    for (const c of cells) {
-      const d = document.createElement(tag);
-      d.textContent = c ?? '';
-      r.append(d);
-    }
-    return r;
-  };
-  t.append(tr(head, 'th'));
-  for (const r of rows || []) t.append(tr(r, 'td'));
+// The page state is the hash: the period and the filters.
+const state = () => {
+  const s = new URLSearchParams(location.hash.slice(1));
+  if (!s.has('days')) s.set('days', '30');
+  return s;
+};
+function go(changes) {
+  const s = state();
+  for (const [k, v] of Object.entries(changes)) v == null ? s.delete(k) : s.set(k, v);
+  location.hash = s.toString();
 }
 
-// pivot turns rows of [x, series, n] into Chart.js labels and one dataset per series.
-function pivot(rows, name) {
-  rows = rows || [];
-  const xs = [...new Set(rows.map(r => r[0]))], ss = [...new Set(rows.map(r => r[1]))];
-  return {
-    labels: xs,
-    datasets: ss.map(s => ({label: name(s), data: xs.map(x => (rows.find(r => r[0] === x && r[1] === s) || [0, 0, 0])[2])})),
-  };
+function el(tag, attrs, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) k.startsWith('on') ? e[k] = v : e.setAttribute(k, v);
+  for (const c of children) e.append(c instanceof Node ? c : String(c ?? ''));
+  return e;
+}
+// link sets filters on click.
+const link = (text, changes) => el('a', {class: 'go', onclick: e => { e.stopPropagation(); go(changes); }}, text);
+const num = (n, attrs) => el('td', {class: 'n', ...attrs}, n ?? 0);
+const table = (head, rows) => el('table', {}, el('tr', {}, ...head.map(h => el('th', {}, h))), ...rows);
+
+// rel is path from base when it lies below it.
+function rel(path, base) {
+  if (!path || !base || path === base) return path;
+  for (const sep of ['/', '\\']) if (path.startsWith(base + sep)) return path.slice(base.length + 1);
+  return path;
 }
 
-function chart(id, type, chartData, options) {
-  if (!window.Chart) {
-    document.getElementById(id).replaceWith('Chart.js did not load from jsDelivr.');
+const shq = a => /^[\w@%+=:,./#-]+$/.test(a) ? a : "'" + a.replaceAll("'", "'\\''") + "'";
+
+async function api(view, extra) {
+  const s = state(), q = new URLSearchParams();
+  for (const k of ['days', ...filters]) if (s.has(k)) q.set(k, s.get(k));
+  for (const [k, v] of Object.entries(extra || {})) q.set(k, v);
+  const r = await fetch(`api/${view}?${q}`);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function render() {
+  const s = state();
+  document.getElementById('days').value = s.get('days');
+  document.getElementById('filters').replaceChildren(...filters.filter(k => s.has(k)).map(k => el('span', {class: 'chip'},
+    `${k}: ${k === 'code' ? (s.get(k) === 'failed' ? 'failed' : outcome(s.get(k))) : s.get(k) || '(none)'}`,
+    el('button', {title: 'remove', onclick: () => go({[k]: null})}, '×'))));
+  const project = s.get('project');
+  const root = document.getElementById('report');
+  let days, places, usage, errors, calls;
+  try {
+    [days, places, usage, errors, calls] = await Promise.all([
+      api('days'), api(project ? 'worktrees' : 'projects'), api('usage'), api('errors'), api('calls')]);
+  } catch (e) {
+    root.replaceChildren(el('p', {class: 'err'}, e.message));
     return;
   }
-  new Chart(document.getElementById(id), {type, data: chartData, options: {animation: false, maintainAspectRatio: false, ...options}});
+  const total = places.reduce((n, r) => n + r.calls, 0), failed = places.reduce((n, r) => n + r.failed, 0);
+  root.replaceChildren(
+    el('p', {}, `calls: ${total}, failed: ${failed}` + (total ? ` (${Math.round(100 * failed / total)}%)` : '')),
+    el('h2', {}, 'Calls by day'), el('div', {class: 'chart'}, el('canvas', {id: 'days-chart'})),
+    ...(project ? worktrees(places, project) : projects(places)),
+    el('h2', {}, 'Usage'), usageTable(usage),
+    el('h2', {}, 'Errors'), errorsTable(errors),
+    el('h2', {}, 'Calls'), feed(calls));
+  daysChart(days);
 }
 
-const [calls, projects, first, last] = data.Summary[0];
-document.getElementById('summary').textContent = `calls: ${calls}, projects: ${projects}, from ${local(first)} to ${local(last)}`;
+function daysChart(rows) {
+  if (chart) chart.destroy();
+  const canvas = document.getElementById('days-chart');
+  if (!window.Chart) {
+    canvas.replaceWith('Chart.js did not load from jsDelivr.');
+    return;
+  }
+  const labels = [...new Set(rows.map(r => r.day))], codes = [...new Set(rows.map(r => r.code))].sort();
+  chart = new Chart(canvas, {
+    type: 'bar',
+    data: {labels, datasets: codes.map(c => ({
+      label: outcome(c), backgroundColor: colors[c],
+      data: labels.map(d => (rows.find(r => r.day === d && r.code === c) || {calls: 0}).calls),
+    }))},
+    options: {animation: false, maintainAspectRatio: false, scales: {x: {stacked: true}, y: {stacked: true}}},
+  });
+}
 
-const stacked = {scales: {x: {stacked: true}, y: {stacked: true}}};
-chart('days', 'bar', pivot(data.Days, s => s), stacked);
-table('projects', ['git root', 'catnip root', 'calls', 'show', 'edit', 'write', 'exit code not 0'], data.Projects);
-table('dirs', ['cwd', 'calls'], data.Dirs);
-chart('codes', 'bar', pivot(data.Codes, s => `exit ${s}`), stacked);
-chart('flags', 'bar', {
-  labels: (data.Flags || []).map(r => r[0]),
-  datasets: [{label: 'uses', data: (data.Flags || []).map(r => r[1])}],
-}, {indexAxis: 'y'});
-table('failures', ['time', 'command', 'cwd', 'file', 'exit code', 'argv'], (data.Failures || []).map(r => [local(r[0]), ...r.slice(1)]));
-table('commands', ['command', 'calls'], data.Commands);
+function projects(rows) {
+  return [el('h2', {}, 'Projects'), table(['project', 'calls', 'failed', 'show', 'edit', 'write', 'last call'], rows.map(r =>
+    el('tr', {class: 'go', onclick: () => go({project: r.project})},
+      el('td', {}, r.project), num(r.calls),
+      num(r.failed, {class: 'n go', onclick: e => { e.stopPropagation(); go({project: r.project, code: 'failed'}); }}),
+      num(r.show), num(r.edit), num(r.write), el('td', {}, local(r.last)))))];
+}
+
+function worktrees(rows, project) {
+  return [el('h2', {}, project), table(['worktree', 'branch', 'config', 'calls', 'failed', 'last call'], rows.map(r =>
+    el('tr', {class: 'go', onclick: () => go({worktree: r.worktree})},
+      el('td', {}, r.worktree === project ? '(main)' : rel(r.worktree, project) || '(no git)'), el('td', {}, r.branch),
+      el('td', {}, rel(r.config, project) || el('span', {class: 'muted'}, 'none')),
+      num(r.calls), num(r.failed), el('td', {}, local(r.last)))))];
+}
+
+function usageTable(rows) {
+  const kinds = [...new Set(rows.map(r => r.kind))], codes = [...new Set(rows.map(r => r.code))].sort();
+  const count = (k, c) => (rows.find(r => r.kind === k && r.code === c) || {calls: 0}).calls;
+  return table(['command', ...codes.map(outcome), 'total', 'failed'], kinds.map(k => {
+    const all = codes.reduce((n, c) => n + count(k, c), 0), bad = all - count(k, 0);
+    return el('tr', {},
+      el('td', {}, k ? link(k, {kind: k}) : '(none)'),
+      ...codes.map(c => count(k, c) ? num(count(k, c), {class: 'n go', onclick: () => go({kind: k, code: String(c)})}) : num('')),
+      num(all), num(bad ? `${bad} (${Math.round(100 * bad / all)}%)` : ''));
+  }));
+}
+
+function errorsTable(rows) {
+  if (!rows.length) return el('p', {class: 'muted'}, 'none');
+  return table(['error', 'outcome', 'calls', 'last'], rows.map(r =>
+    el('tr', {class: 'go', onclick: () => go({group: r.group})},
+      el('td', {}, el('pre', {}, r.group || '(no message)')), el('td', {}, outcome(r.code)), num(r.calls), el('td', {}, local(r.last)))));
+}
+
+function feed(rows) {
+  const t = table(['time', 'command', 'outcome', 'file', 'error'], []);
+  const more = el('button', {}, 'older');
+  const add = rows => {
+    for (const r of rows) {
+      const row = el('tr', {class: 'go'},
+        el('td', {}, local(r.time)), el('td', {}, r.kind), el('td', {class: r.code ? 'err' : ''}, outcome(r.code)),
+        el('td', {}, rel(r.file, r.worktree || r.project)), el('td', {}, el('pre', {}, r.error.split('\n')[0])));
+      let open;
+      row.onclick = () => {
+        if (open) {
+          open.remove();
+          open = null;
+          return;
+        }
+        open = el('tr', {class: 'card'}, el('td', {colspan: 5}, card(r)));
+        row.after(open);
+      };
+      t.append(row);
+    }
+    more.hidden = rows.length < pageSize;
+    if (rows.length) more.onclick = () => api('calls', {before: rows[rows.length - 1].id}).then(add);
+  };
+  add(rows);
+  return el('div', {}, rows.length ? t : el('p', {class: 'muted'}, 'none'), more);
+}
+
+function card(r) {
+  const argv = r.argv ? JSON.parse(r.argv) : null;
+  const cmd = argv ? `cd ${shq(r.cwd)} && catnip ${argv.map(shq).join(' ')}` : '';
+  const line = (name, ...value) => el('tr', {}, el('th', {}, name), el('td', {}, ...value));
+  return el('table', {},
+    line('time', local(r.time)),
+    line('outcome', outcome(r.code)),
+    line('command', argv ? el('pre', {}, cmd) : el('span', {class: 'muted'}, 'argv dropped: the database outgrew its limit'),
+      argv ? el('button', {onclick: e => { e.stopPropagation(); navigator.clipboard.writeText(cmd); }}, 'copy') : ''),
+    ...(r.error ? [line('error', el('pre', {}, r.error)), line('error group', link(r.group, {group: r.group}))] : []),
+    line('cwd', r.cwd),
+    line('file', r.file ? link(r.file, {file: r.file}) : ''),
+    line('project', link(r.project, {project: r.project})),
+    line('worktree', r.worktree ? link(r.worktree, {project: r.project, worktree: r.worktree}) : ''),
+    line('branch', r.branch),
+    line('config', r.config || el('span', {class: 'muted'}, 'none')));
+}
+
+document.getElementById('days').onchange = e => go({days: e.target.value});
+window.onhashchange = render;
+render();
 </script>
 </body>
 </html>

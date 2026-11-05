@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -125,6 +126,175 @@ func TestForFindsTheNearestProject(t *testing.T) {
 			assert.Equal(t, tt.check, check)
 		})
 	}
+}
+
+// tree writes files, path to content, into a fresh directory and returns it; "~" in a content stands for the directory.
+func tree(t *testing.T, files map[string]string) string {
+	dir := t.TempDir()
+	for name, content := range files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(strings.ReplaceAll(content, "~", dir)), 0o644))
+	}
+	return dir
+}
+
+// git files of a main working tree "main" on branch main with a linked worktree "wt" on branch feature/x.
+var worktree = map[string]string{
+	"main/.git/HEAD":                   "ref: refs/heads/main\n",
+	"main/.git/worktrees/wt/HEAD":      "ref: refs/heads/feature/x\n",
+	"main/.git/worktrees/wt/commondir": "../..\n",
+	"wt/.git":                          "gitdir: ~/main/.git/worktrees/wt\n",
+}
+
+func with(files map[string]string, more ...string) map[string]string {
+	out := map[string]string{}
+	for k, v := range files {
+		out[k] = v
+	}
+	for i := 0; i < len(more); i += 2 {
+		out[more[i]] = more[i+1]
+	}
+	return out
+}
+
+func TestFindRepo(t *testing.T) {
+	tests := []struct {
+		name  string
+		files map[string]string
+		dir   string
+		want  config.Repo // Root and Main relative to the tree
+	}{
+		{name: "main working tree", files: worktree, dir: "main/src", want: config.Repo{Root: "main", Main: "main", Branch: "main"}},
+		{name: "linked worktree", files: worktree, dir: "wt/src", want: config.Repo{Root: "wt", Main: "main", Branch: "feature/x"}},
+		{
+			name:  "relative gitdir, detached HEAD",
+			files: with(worktree, "wt/.git", "gitdir: ../main/.git/worktrees/wt", "main/.git/worktrees/wt/HEAD", "1f0e2d3c\n"),
+			dir:   "wt",
+			want:  config.Repo{Root: "wt", Main: "main"},
+		},
+		{
+			name: "worktree of a bare repository",
+			files: map[string]string{
+				"r.git/HEAD":                   "ref: refs/heads/main\n",
+				"r.git/worktrees/wt/HEAD":      "ref: refs/heads/main\n",
+				"r.git/worktrees/wt/commondir": "../..\n",
+				"wt/.git":                      "gitdir: ~/r.git/worktrees/wt\n",
+			},
+			dir:  "wt",
+			want: config.Repo{Root: "wt", Main: "r.git", Branch: "main"},
+		},
+		{
+			name: "submodule is a repository of its own",
+			files: map[string]string{
+				"super/.git/HEAD":             "ref: refs/heads/main\n",
+				"super/.git/modules/sub/HEAD": "ref: refs/heads/dev\n",
+				"super/sub/.git":              "gitdir: ../.git/modules/sub\n",
+			},
+			dir:  "super/sub/src",
+			want: config.Repo{Root: "super/sub", Main: "super/sub", Branch: "dev"},
+		},
+		{name: "outside git", files: map[string]string{"a/x": ""}, dir: "a"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := tree(t, tt.files)
+
+			got := config.FindRepo(filepath.Join(dir, filepath.FromSlash(tt.dir)))
+
+			assert.Equal(t, tt.want, config.Repo{Root: rel(t, dir, got.Root), Main: rel(t, dir, got.Main), Branch: got.Branch})
+		})
+	}
+}
+
+func TestProject(t *testing.T) {
+	tests := []struct {
+		name       string
+		files      map[string]string
+		dir        string
+		root, file string // relative to the tree
+	}{
+		{
+			name:  "main working tree: nearest config",
+			files: with(worktree, "main/.catnip.json", "{}", "main/sub/.catnip.json", "{}"),
+			dir:   "main/sub/x",
+			root:  "main/sub", file: "main/sub/.catnip.json",
+		},
+		{
+			name:  "linked worktree with a config of its own",
+			files: with(worktree, "main/.catnip.json", "{}", "wt/.catnip.json", "{}"),
+			dir:   "wt/sub",
+			root:  "wt", file: "wt/.catnip.json",
+		},
+		{
+			name:  "linked worktree without one: main tree config, rooted in the worktree",
+			files: with(worktree, "main/sub/.catnip.json", "{}", "wt/sub/x/a", ""),
+			dir:   "wt/sub/x",
+			root:  "wt/sub", file: "main/sub/.catnip.json",
+		},
+		{
+			name: "worktree inside the main tree does not take the config above it as its own",
+			files: map[string]string{
+				"main/.git/HEAD":                   "ref: refs/heads/main\n",
+				"main/.git/worktrees/wt/HEAD":      "ref: refs/heads/x\n",
+				"main/.git/worktrees/wt/commondir": "../..\n",
+				"main/.catnip.json":                "{}",
+				"main/.wt/x/.git":                  "gitdir: ~/main/.git/worktrees/wt\n",
+				"main/.wt/x/src/a":                 "",
+			},
+			dir:  "main/.wt/x/src",
+			root: "main/.wt/x", file: "main/.catnip.json",
+		},
+		{
+			name:  "config above the main tree",
+			files: with(worktree, ".catnip.json", "{}"),
+			dir:   "wt",
+			root:  ".", file: ".catnip.json",
+		},
+		{name: "linked worktree, no config", files: worktree, dir: "wt"},
+		{
+			name: "submodule takes the config above it",
+			files: map[string]string{
+				"super/.git/HEAD":             "ref: refs/heads/main\n",
+				"super/.git/modules/sub/HEAD": "ref: refs/heads/main\n",
+				"super/.catnip.json":          "{}",
+				"super/sub/.git":              "gitdir: ../.git/modules/sub\n",
+			},
+			dir:  "super/sub",
+			root: "super", file: "super/.catnip.json",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := tree(t, tt.files)
+
+			root, file := config.Project(filepath.Join(dir, filepath.FromSlash(tt.dir)))
+
+			assert.Equal(t, []string{tt.root, tt.file}, []string{rel(t, dir, root), rel(t, dir, file)})
+		})
+	}
+}
+
+func TestLoadInLinkedWorktree(t *testing.T) {
+	isolateUserConfig(t, t.TempDir())
+	dir := tree(t, with(worktree, "main/.catnip.json", `{"sub/*.txt": {"check": {"lint": "lint {file}"}}}`, "wt/sub/a.txt", ""))
+
+	c, err := config.Load(filepath.Join(dir, "wt", "sub"))
+	require.NoError(t, err)
+	_, check := c.For(filepath.Join(dir, "wt", "sub", "a.txt"))
+
+	assert.Equal(t, filepath.Join(dir, "wt"), c.Root)
+	assert.Equal(t, []config.Command{{Name: "lint", Cmd: "lint 'sub/a.txt'"}}, check)
+}
+
+// rel is path relative to dir with forward slashes, "" for "".
+func rel(t *testing.T, dir, path string) string {
+	if path == "" {
+		return ""
+	}
+	r, err := filepath.Rel(dir, path)
+	require.NoError(t, err)
+	return filepath.ToSlash(r)
 }
 
 func TestLoadRejectsBrokenConfig(t *testing.T) {

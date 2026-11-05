@@ -1,4 +1,5 @@
-// Package stats records every catnip call in a SQLite database and reports on it for the person running the agents.
+// Package stats records every catnip call in a SQLite database and serves a report on it for the person running the
+// agents.
 package stats
 
 import (
@@ -6,10 +7,14 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +26,9 @@ import (
 // Limit is the database size past which Record drops argv of the oldest calls with codes 0 and 3.
 const Limit = 100 << 20
 
+// errorLimit is the most bytes of a call's stderr Record keeps.
+const errorLimit = 1 << 10
+
 // Call is one catnip call.
 type Call struct {
 	Time time.Time
@@ -28,20 +36,10 @@ type Call struct {
 	Argv []string
 	// File is the file the call is about as given, "" when the arguments name none.
 	File string
-	// Flags are the recognized flags, one per occurrence.
+	// Flags are the recognized flags.
 	Flags []string
-}
-
-// Report is what Collect reads for Render, every section as rows of columns.
-type Report struct {
-	Summary  [][]any // calls, projects, first and last call time in UTC
-	Days     [][]any // local day, command (show, edit, write or other), calls
-	Projects [][]any // git root, catnip root, calls, show, edit, write, exit code not 0
-	Dirs     [][]any // cwd, calls
-	Codes    [][]any // command, exit code, calls
-	Flags    [][]any // flag, uses
-	Failures [][]any // time in UTC, command, cwd, file, exit code, argv: the last 50 calls with codes 1 and 2
-	Commands [][]any // command that catnip does not have, calls
+	// Error is what the call wrote to stderr, without the usage text.
+	Error string
 }
 
 const schema = `
@@ -49,16 +47,17 @@ CREATE TABLE IF NOT EXISTS calls (
   id          INTEGER PRIMARY KEY,
   time        TEXT NOT NULL,
   command     TEXT NOT NULL,
+  flags       TEXT NOT NULL,
+  argv        TEXT,
+  exit_code   INTEGER NOT NULL,
+  error       TEXT NOT NULL,
+  error_group TEXT NOT NULL,
   cwd         TEXT NOT NULL,
   file        TEXT NOT NULL,
-  git_root    TEXT NOT NULL,
-  catnip_root TEXT NOT NULL,
-  exit_code   INTEGER NOT NULL,
-  argv        TEXT
-);
-CREATE TABLE IF NOT EXISTS flags (
-  call_id INTEGER NOT NULL REFERENCES calls(id),
-  name    TEXT NOT NULL
+  project     TEXT NOT NULL,
+  worktree    TEXT NOT NULL,
+  branch      TEXT NOT NULL,
+  config      TEXT NOT NULL
 );`
 
 // timeFormat is UTC that sorts as text and that SQLite date functions read.
@@ -73,9 +72,9 @@ func Path() (string, error) {
 	return filepath.Join(d, "catnip", "stats.db"), nil
 }
 
-// Record adds the call and its exit code to the database at path, creating it. The project roots are looked up from
-// the file's directory, or from the working directory without a file. Past limit bytes it drops argv of the oldest
-// tenth of calls with codes 0 and 3.
+// Record adds the call and its exit code to the database at path, creating it. The repository and the project config
+// are looked up from the file's directory, or from the working directory without a file. Past limit bytes it drops
+// argv of the oldest tenth of calls with codes 0 and 3.
 func Record(path string, c Call, code int, limit int64) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -109,27 +108,21 @@ func Record(path string, c Call, code int, limit int64) error {
 	if err := enc.Encode(append([]string{}, c.Argv...)); err != nil {
 		return err
 	}
-	tx, err := db.Begin()
-	if err != nil {
-		return err
+	repo := config.FindRepo(dir)
+	project := repo.Main
+	if project == "" {
+		project = cwd
 	}
-	defer tx.Rollback()
-	res, err := tx.Exec(`INSERT INTO calls (time, command, cwd, file, git_root, catnip_root, exit_code, argv)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, c.Time.UTC().Format(timeFormat), command, cwd, file,
-		config.Find(dir, ".git"), config.Find(dir, config.ProjectFile), code, strings.TrimSuffix(argv.String(), "\n"))
-	if err != nil {
-		return err
+	_, cfg := config.Project(dir)
+	text := strings.TrimSpace(c.Error)
+	if len(text) > errorLimit {
+		text = strings.ToValidUTF8(text[:errorLimit], "")
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return err
-	}
-	for _, f := range c.Flags {
-		if _, err := tx.Exec(`INSERT INTO flags (call_id, name) VALUES (?, ?)`, id, f); err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(); err != nil {
+	if _, err := db.Exec(`INSERT INTO calls (time, command, flags, argv, exit_code, error, error_group, cwd, file, project,
+		worktree, branch, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.Time.UTC().Format(timeFormat), command, strings.Join(slices.Compact(slices.Sorted(slices.Values(c.Flags))), " "),
+		strings.TrimSuffix(argv.String(), "\n"), code, text, group(text, c.File), cwd, file, project, repo.Root,
+		repo.Branch, cfg); err != nil {
 		return err
 	}
 	var size int64
@@ -148,9 +141,63 @@ func Record(path string, c Call, code int, limit int64) error {
 	return err
 }
 
-// Collect reads the report from the database at path over the calls since the given time, all of them for the zero
-// time. Days are local by the current UTC offset.
-func Collect(path string, since time.Time) (*Report, error) {
+var (
+	quoted  = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+	address = regexp.MustCompile(`\b\d+#[0-9a-f]{4}\b`)
+	number  = regexp.MustCompile(`\d+`)
+)
+
+// group is the first line of an error with what differs between calls replaced: the file as given, quoted text,
+// line addresses and numbers. The detail after "; " or a tab is dropped.
+func group(text, file string) string {
+	line, _, _ := strings.Cut(text, "\n")
+	if file != "" {
+		line = strings.ReplaceAll(line, file, "<file>")
+	}
+	line = quoted.ReplaceAllString(line, "<text>")
+	line, _, _ = strings.Cut(line, "; ")
+	line, _, _ = strings.Cut(line, "\t")
+	line = address.ReplaceAllString(line, "<n>#<hash>")
+	return number.ReplaceAllString(line, "<n>")
+}
+
+// Filter narrows a view to the calls since a time, all of them for the zero time, and to its non-empty fields.
+type Filter struct {
+	Since                          time.Time
+	Project, Worktree, File, Group string
+	// Kind is the command and its flags, as the usage view lists them.
+	Kind string
+	// Code is an exit code, or "failed" for any code but 0.
+	Code string
+	// Before keeps the calls with a smaller id, 0 every call: the calls view lists the next page from the last id.
+	Before int64
+}
+
+// PageSize is how many calls the calls view lists at once.
+const PageSize = 100
+
+// views are the report's queries over c, the filtered calls with their kind. Days are local by the current UTC offset.
+var views = map[string]string{
+	"days": `SELECT day, exit_code AS code, count(*) AS calls FROM c GROUP BY day, code ORDER BY day, code`,
+	"projects": `SELECT project, count(*) AS calls, sum(exit_code <> 0) AS failed, sum(command = 'show') AS show,
+		sum(command = 'edit') AS edit, sum(command = 'write') AS write, max(time) AS last FROM c GROUP BY project
+		ORDER BY calls DESC, project`,
+	"worktrees": `SELECT worktree, branch, config, count(*) AS calls, sum(exit_code <> 0) AS failed, max(time) AS last
+		FROM c GROUP BY worktree, branch, config ORDER BY last DESC, worktree`,
+	"usage": `SELECT kind, exit_code AS code, count(*) AS calls FROM c GROUP BY kind, code ORDER BY kind, code`,
+	"errors": `SELECT error_group AS "group", max(exit_code) AS code, count(*) AS calls, max(time) AS last FROM c
+		WHERE exit_code <> 0 GROUP BY error_group ORDER BY calls DESC, error_group`,
+	"calls": `SELECT id, time, kind, exit_code AS code, argv, error, error_group AS "group", cwd, file, project, worktree,
+		branch, config FROM c ORDER BY id DESC LIMIT ` + strconv.Itoa(PageSize),
+}
+
+// Query reads a view from the database at path: days, projects, worktrees, usage, errors or calls. Each row maps
+// a column to its value.
+func Query(path, view string, f Filter) ([]map[string]any, error) {
+	q, ok := views[view]
+	if !ok {
+		return nil, fmt.Errorf("no view %q", view)
+	}
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
@@ -159,41 +206,16 @@ func Collect(path string, since time.Time) (*Report, error) {
 		return nil, err
 	}
 	defer db.Close()
-	from := ""
-	if !since.IsZero() {
-		from = since.UTC().Format(timeFormat)
+	since := ""
+	if !f.Since.IsZero() {
+		since = f.Since.UTC().Format(timeFormat)
 	}
 	_, offset := time.Now().Zone()
-	const kind = `CASE WHEN command IN ('show', 'edit', 'write') THEN command ELSE 'other' END`
-	r := &Report{}
-	for _, q := range []struct {
-		rows *[][]any
-		sql  string
-	}{
-		{&r.Summary, `SELECT count(*), count(DISTINCT CASE WHEN git_root || catnip_root <> '' THEN git_root || char(0) || catnip_root END),
-			coalesce(min(time), ''), coalesce(max(time), '') FROM calls WHERE time >= ?1`},
-		{&r.Days, `SELECT date(time, '` + fmt.Sprintf("%+d", offset) + ` seconds') AS day, ` + kind + ` AS k, count(*) FROM calls
-			WHERE time >= ?1 GROUP BY day, k ORDER BY day, k`},
-		{&r.Projects, `SELECT git_root, catnip_root, count(*), sum(command = 'show'), sum(command = 'edit'), sum(command = 'write'),
-			sum(exit_code <> 0) FROM calls WHERE time >= ?1 GROUP BY git_root, catnip_root ORDER BY count(*) DESC, git_root, catnip_root`},
-		{&r.Dirs, `SELECT cwd, count(*) FROM calls WHERE time >= ?1 GROUP BY cwd ORDER BY count(*) DESC, cwd LIMIT 50`},
-		{&r.Codes, `SELECT ` + kind + ` AS k, exit_code, count(*) FROM calls WHERE time >= ?1 GROUP BY k, exit_code ORDER BY k, exit_code`},
-		{&r.Flags, `SELECT f.name, count(*) FROM flags f JOIN calls c ON c.id = f.call_id WHERE c.time >= ?1
-			GROUP BY f.name ORDER BY count(*) DESC, f.name`},
-		{&r.Failures, `SELECT time, command, cwd, file, exit_code, coalesce(argv, '') FROM calls
-			WHERE time >= ?1 AND exit_code IN (1, 2) ORDER BY id DESC LIMIT 50`},
-		{&r.Commands, `SELECT command, count(*) FROM calls WHERE time >= ?1
-			AND command NOT IN ('show', 'edit', 'write', 'help', '-h', '--help', 'stats') GROUP BY command ORDER BY count(*) DESC, command`},
-	} {
-		if *q.rows, err = rows(db, q.sql, from); err != nil {
-			return nil, err
-		}
-	}
-	return r, nil
-}
-
-func rows(db *sql.DB, query string, args ...any) ([][]any, error) {
-	rs, err := db.Query(query, args...)
+	rs, err := db.Query(`WITH c AS (SELECT *, trim(command || ' ' || flags) AS kind, date(time, ?9) AS day FROM calls
+		WHERE time >= ?1 AND (?2 = '' OR project = ?2) AND (?3 = '' OR worktree = ?3) AND (?4 = '' OR file = ?4)
+		AND (?5 = '' OR error_group = ?5) AND (?6 = '' OR trim(command || ' ' || flags) = ?6)
+		AND (?7 = '' OR ?7 = 'failed' AND exit_code <> 0 OR exit_code = ?7) AND (?8 = 0 OR id < ?8)) `+q,
+		since, f.Project, f.Worktree, f.File, f.Group, f.Kind, f.Code, f.Before, fmt.Sprintf("%+d seconds", offset))
 	if err != nil {
 		return nil, err
 	}
@@ -202,15 +224,19 @@ func rows(db *sql.DB, query string, args ...any) ([][]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := [][]any{}
+	out := []map[string]any{}
 	for rs.Next() {
-		row := make([]any, len(cols))
+		vals := make([]any, len(cols))
 		ptrs := make([]any, len(cols))
-		for i := range row {
-			ptrs[i] = &row[i]
+		for i := range vals {
+			ptrs[i] = &vals[i]
 		}
 		if err := rs.Scan(ptrs...); err != nil {
 			return nil, err
+		}
+		row := make(map[string]any, len(cols))
+		for i, col := range cols {
+			row[col] = vals[i]
 		}
 		out = append(out, row)
 	}
@@ -220,9 +246,36 @@ func rows(db *sql.DB, query string, args ...any) ([][]any, error) {
 //go:embed report.html
 var page string
 
-var report = template.Must(template.New("report").Parse(page))
-
-// Render writes the report as one HTML page; its charts load Chart.js from jsDelivr.
-func Render(w io.Writer, r *Report) error {
-	return report.Execute(w, r)
+// Handler serves the report page and, at /api/<view>, each view as JSON over the database at path. The query
+// parameters days, project, worktree, file, group, kind, code and before fill the Filter. Only requests to 127.0.0.1
+// or localhost are served, so a web page cannot reach the report through a name that resolves to this machine.
+func Handler(path string) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		io.WriteString(w, page)
+	})
+	mux.HandleFunc("GET /api/{view}", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		f := Filter{Project: q.Get("project"), Worktree: q.Get("worktree"), File: q.Get("file"), Group: q.Get("group"),
+			Kind: q.Get("kind"), Code: q.Get("code")}
+		if days, err := strconv.Atoi(q.Get("days")); err == nil && days > 0 {
+			f.Since = time.Now().AddDate(0, 0, -days)
+		}
+		f.Before, _ = strconv.ParseInt(q.Get("before"), 10, 64)
+		rows, err := Query(path, r.PathValue("view"), f)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rows)
+	})
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if host, _, _ := net.SplitHostPort(r.Host); host != "127.0.0.1" && host != "localhost" {
+			http.Error(w, "forbidden host", http.StatusForbidden)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
