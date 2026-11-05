@@ -5,27 +5,27 @@ description: "Use for every file read or edit, by file tools or shell: cat, sed,
 
 # catnip
 
-`catnip` читает и правит файлы одной bash-командой и сцепляется через `&&`. Каждое чтение и каждая правка файла идут
-через него: вместо встроенных инструментов агента для чтения и правки файлов, `cat`, `sed -n`, `head`/`tail`, `sed -i`,
-heredoc в файл и python-скриптов с `str.replace`. Справка команды — `catnip <команда> --help`.
+`catnip` reads and edits files in one bash command and chains with `&&`. Every file read and every file edit goes
+through it: in place of the agent's built-in tools for reading and editing files, `cat`, `sed -n`, `head`/`tail`,
+`sed -i`, heredoc into a file and python scripts with `str.replace`. Help for a command: `catnip <command> --help`.
 
-## Просмотр
+## View
 
 ```bash
-catnip show src/a.php                     # весь файл; адрес строки 57#a3f0 печатается без флагов
-catnip show src/a.php:40-80               # диапазон
-catnip show src/a.php:57                  # позиция и 5 строк вокруг; -C N меняет окрестность
-catnip show src/a.php:57:12               # позиция с колонкой, как её печатают инструменты на LSP
-catnip show --gutter line src/a.php:40-80 # только номера строк; --gutter none — только текст
-catnip show --blame src/a.php:57          # коммит, автор и дата каждой строки
+catnip show src/a.php                     # the whole file; the line address 57#a3f0 is printed without flags
+catnip show src/a.php:40-80               # a range
+catnip show src/a.php:57                  # a position and 5 lines around it; -C N changes the context
+catnip show src/a.php:57:12               # a position with a column, as LSP-based tools print it
+catnip show --gutter line src/a.php:40-80 # line numbers only; --gutter none prints only the text
+catnip show --blame src/a.php:57          # commit, author and date of every line
 ```
 
-Адрес строки `57#a3f0` — её номер и хеш содержимого, по нему правят строки. Строки и колонки с 1. Диапазон за
-концом файла — ошибка с реальным числом строк.
+A line address `57#a3f0` is the line number and a hash of its content; edits address lines by it. Lines and columns
+start at 1. A range past the end of the file is an error that names the real line count.
 
-## Правка
+## Edit
 
-Один файл, любое число правок, всё или ничего:
+One file, any number of edits, all or nothing:
 
 ```bash
 catnip edit src/a.php \
@@ -36,26 +36,26 @@ catnip edit src/a.php \
   && make test
 ```
 
-- `--replace OLD NEW` — заменить точный текст, он может быть частью строки или несколькими строками. Текст должен
-  найтись ровно один раз, с `--count N` сразу после — ровно N раз (заменяются все).
-- `--lines FROM#HASH[-TO#HASH] NEW` — заменить целые строки по адресам из `show`. Если крайняя строка диапазона
-  изменилась, правка отклоняется; середину диапазона catnip не сверяет. Когда важно, что весь блок не менялся,
-  используй `--replace` с его полным текстом.
-- `--after LINE#HASH NEW`, `--before LINE#HASH NEW` — вставить целые строки после или перед строкой; если она
-  изменилась, правка отклоняется.
-- Все правки адресуют исходное содержимое файла: номера строк из `show` действуют для всей команды; пересекающиеся
-  правки — ошибка.
-- Если хоть одна правка не сошлась, файл не пишется, а ошибка называет причину: строки совпадений, первую строку,
-  на которой многострочный текст разошёлся с файлом, или похожие строки.
-- Текст — обычные аргументы shell: в одинарных кавычках `$`, `\` и переводы строк идут как есть, а сама `'`
-  пишется как `'\''`.
+- `--replace OLD NEW` replaces exact text: part of a line or several lines. The text must be found exactly once, or,
+  with `--count N` right after, exactly N times (all are replaced).
+- `--lines FROM#HASH[-TO#HASH] NEW` replaces whole lines by the addresses from `show`. If an edge line of the range
+  has changed, the edit is rejected; catnip does not check the middle of the range. When it matters that the whole
+  block is unchanged, use `--replace` with its full text.
+- `--after LINE#HASH NEW`, `--before LINE#HASH NEW` insert whole lines after or before the line; if it has changed,
+  the edit is rejected.
+- Every edit addresses the original content of the file: line numbers from `show` hold for the whole command;
+  overlapping edits are an error.
+- If any edit does not match, the file is not written, and the error names the reason: the matching lines, the
+  first line where multi-line text diverged from the file, or similar lines.
+- Text is plain shell arguments: inside single quotes `$`, `\` and newlines pass as is, and `'` itself is written
+  as `'\''`.
 
-После записи catnip печатает изменённые строки (`путь:строка`, `-`/`+`) и запускает фиксеры и проверки из конфига,
-каждый под своим именем: `<имя>: passed`; `<имя>: fixed`, если фиксер изменил файл (что именно — покажет
-`--show-fix-diff` перед путём); `<имя>: failed` и вывод команды. Если сменились
-BOM или окончания строк, это сказано отдельной строкой.
+After writing, catnip prints the changed lines (`path:line`, `-`/`+`) and runs the fixers and checks from the
+config, each under its name: `<name>: passed`; `<name>: fixed` if a fixer changed the file (`--show-fix-diff`
+before the path shows what it changed); `<name>: failed` and the command's output. A change of BOM or line endings
+is reported on a line of its own.
 
-## Новый файл
+## New file
 
 ```bash
 catnip write src/new.go <<'EOF'
@@ -63,13 +63,13 @@ package x
 EOF
 ```
 
-Перезапись существующего файла сохраняет его BOM, окончания строк и наличие перевода строки в конце.
+Rewriting an existing file keeps its BOM, line endings and whether it ends with a newline.
 
-## Коды выхода
+## Exit codes
 
-| Код | Значение |
+| Code | Meaning |
 |---|---|
-| 0 | записано, проверки прошли |
-| 1 | ничего не записано |
-| 2 | ошибка аргументов или конфига |
-| 3 | записано, но проверка упала или файл записан не целиком |
+| 0 | written, checks passed |
+| 1 | nothing written |
+| 2 | bad arguments or config |
+| 3 | written, but a check failed or the file was written in part |
