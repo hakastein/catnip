@@ -6,12 +6,12 @@ description: "Use when reading or editing files from the shell. catnip shows lin
 # catnip
 
 `catnip` читает и правит файлы одной bash-командой и сцепляется через `&&`. Используй его вместо `sed -n`, `cat -n`,
-`sed -i`, heredoc в файл и python-скриптов с `str.replace`.
+`sed -i`, heredoc в файл и python-скриптов с `str.replace`. Справка команды — `catnip <команда> --help`.
 
 ## Просмотр
 
 ```bash
-catnip show src/a.php                     # весь файл, у каждой строки адрес 57#a3f0
+catnip show src/a.php                     # весь файл, у каждой строки адрес 57#a3f0 без флагов
 catnip show src/a.php:40-80               # диапазон
 catnip show src/a.php:57                  # позиция и 5 строк вокруг; -C N меняет окрестность
 catnip show src/a.php:57:12               # позиция с колонкой, как её печатают инструменты на LSP

@@ -33,29 +33,74 @@ const (
 	checkFailed = 3 // written, but a fixer or check failed or the file was written in part
 )
 
-const usage = `usage:
-  catnip show [--gutter hash|line|none] [--blame] [-C N] <path>[:<from>-<to> | :<line>[:<column>]]
-  catnip edit [--show-fix-diff] <path> <edit>...
-  catnip write [--show-fix-diff] <path> < content
-  catnip stats
+const exitCodes = `
+exit: 0 written and checks passed, 1 nothing written, 2 bad arguments or config,
+  3 written, but a fixer or check failed or the file was written in part
+`
 
-show prints each line after its address <line>#<hash>; --gutter line prints the line number alone,
-  --gutter none the text alone
---show-fix-diff also prints what each fixer changed
+const usage = `catnip shows and edits files from the shell; commands chain with && by their exit codes.
 
-edits, any number, all or none applied:
-  --replace OLD NEW [--count N]    replace exact text that occurs N times (default 1)
-  --lines FROM#HASH[-TO#HASH] NEW  replace whole lines; FROM#HASH as catnip show prints it
-  --after LINE#HASH NEW            insert whole lines after the line
-  --before LINE#HASH NEW           insert whole lines before the line
+commands:
+  show   print a file or some of its lines, each after its address <line>#<hash>
+  edit   apply replacements and insertions to one file, all or none
+  write  write a file from stdin
+  stats  open a report on recorded catnip calls in the browser
+
+catnip <command> --help prints the help of the command.
+` + exitCodes
+
+const showHelp = `catnip show prints a file, a range of its lines or the lines around a position.
+Each line comes after its address <line>#<hash>, which catnip edit takes.
+
+usage: catnip show [flags] <path>[:<from>-<to> | :<line>[:<column>]]
+  <path>          the whole file
+  <path>:40-80    lines 40 to 80
+  <path>:57[:12]  line 57 and 5 lines on each side
+
+flags:
+  -C N           lines on each side of a position instead of 5
+  --gutter line  line numbers without hashes
+  --gutter none  the text alone
+  --blame        the commit, author and date of each line
+
+exit: 0 printed, 1 no such file or lines, 2 bad arguments
+`
+
+const editHelp = `catnip edit applies edits to one file: all of them, or none if any does not match.
+Every edit addresses the file as it was before the command. catnip prints the changed lines, then
+runs the fixers and checks configured for the file.
+
+usage: catnip edit [--show-fix-diff] <path> <edit>...
+
+edits:
+  --replace OLD NEW [--count N]    replace the text OLD found exactly once, or exactly N times
+  --lines FROM#HASH[-TO#HASH] NEW  replace whole lines, addressed as catnip show prints them
+  --after LINE#HASH NEW            insert lines after the line
+  --before LINE#HASH NEW           insert lines before the line
   an empty NEW deletes; --after and --before need a non-empty NEW
 
-stats serves a report on the recorded calls at a local address until interrupted, prints the
-  address and opens it; every other call is recorded in <user config dir>/catnip/stats.db
+flags:
+  --show-fix-diff  also print what each fixer changed
+` + exitCodes
 
-exit: 0 written and checks passed, 1 nothing written, 2 bad arguments or config,
-  3 written but a fixer or check failed, or the file was written in part
+const writeHelp = `catnip write writes stdin to a file, creating it if missing. Overwriting keeps the BOM, line
+endings and final newline of the file. Then catnip runs the fixers and checks configured for it.
+
+usage: catnip write [--show-fix-diff] <path> < content
+
+flags:
+  --show-fix-diff  also print what each fixer changed
+` + exitCodes
+
+const statsHelp = `catnip stats serves a report on recorded catnip calls at a local address until interrupted,
+prints the address and opens it in the browser. Every other call is recorded in
+<user config dir>/catnip/stats.db.
+
+usage: catnip stats
 `
+
+// helps are the helps of the commands by name.
+var helps = map[string]string{"show": showHelp, "edit": editHelp, "write": writeHelp, "stats": statsHelp}
 
 func main() {
 	call := stats.Call{Time: time.Now(), Argv: os.Args[1:]}
@@ -63,6 +108,9 @@ func main() {
 	code := run(call.Argv, os.Stdin, os.Stdout, io.MultiWriter(os.Stderr, &errs), &call)
 	if len(call.Argv) == 0 || call.Argv[0] != "stats" {
 		call.Error = strings.Replace(errs.String(), usage, "", 1)
+		for _, h := range helps {
+			call.Error = strings.Replace(call.Error, h, "", 1)
+		}
 		if p, err := stats.Path(); err == nil {
 			_ = stats.Record(p, call, code, stats.Limit) // the call's outcome does not depend on its statistics
 		}
@@ -86,17 +134,40 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.C
 	case "stats":
 		return statsCmd(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
-		fmt.Fprint(stdout, usage)
-		return ok
+		if len(args) == 1 {
+			fmt.Fprint(stdout, usage)
+			return ok
+		}
+		if h, found := helps[args[1]]; found {
+			fmt.Fprint(stdout, h)
+			return ok
+		}
+		args = args[1:]
 	}
 	fmt.Fprintf(stderr, "unknown command %q\n%s", args[0], usage)
 	return badUsage
 }
 
-func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
-	fl := flag.NewFlagSet("show", flag.ContinueOnError)
+// usageError prints help to stdout and is ok when err asks for help, otherwise prints it to stderr and is badUsage.
+func usageError(err error, help string, stdout, stderr io.Writer) int {
+	if errors.Is(err, flag.ErrHelp) {
+		fmt.Fprint(stdout, help)
+		return ok
+	}
+	fmt.Fprint(stderr, help)
+	return badUsage
+}
+
+// newFlags is a flag set that prints errors to stderr and leaves the help to usageError.
+func newFlags(name string, stderr io.Writer) *flag.FlagSet {
+	fl := flag.NewFlagSet(name, flag.ContinueOnError)
 	fl.SetOutput(stderr)
-	fl.Usage = func() {} // the caller prints the usage of catnip
+	fl.Usage = func() {}
+	return fl
+}
+
+func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
+	fl := newFlags("show", stderr)
 	gutter := fl.String("gutter", "hash", "before each line: hash (<n>#<hash>), line (<n>) or none")
 	blame := fl.Bool("blame", false, "add git blame of each line")
 	context := fl.Int("C", 5, "lines of context around a position")
@@ -111,8 +182,7 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 		fmt.Fprintf(stderr, "--gutter %q: want one of %s\n", *gutter, strings.Join(view.Gutters, ", "))
 	}
 	if err != nil || len(pos) != 1 || *context < 0 || badGutter {
-		fmt.Fprint(stderr, usage)
-		return badUsage
+		return usageError(err, showHelp, stdout, stderr)
 	}
 	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
 	t, err := view.ParseTarget(pos[0], *context)
@@ -149,9 +219,12 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 
 func editCmd(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 	showFixDiff, args, err := fixFlags("edit", args, stderr, call)
-	if err != nil || len(args) == 0 || strings.HasPrefix(args[0], "--") {
-		fmt.Fprint(stderr, "edit needs the file path first\n"+usage)
-		return badUsage
+	noPath := len(args) == 0 || strings.HasPrefix(args[0], "--")
+	if err == nil && noPath {
+		fmt.Fprintln(stderr, "edit needs the file path first")
+	}
+	if err != nil || noPath {
+		return usageError(err, editHelp, stdout, stderr)
 	}
 	path := args[0]
 	call.File = path
@@ -201,9 +274,7 @@ func editCmd(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 
 // fixFlags parses the flags of edit and write, which come before the path, and adds them to call.
 func fixFlags(name string, args []string, stderr io.Writer, call *stats.Call) (showFixDiff bool, rest []string, err error) {
-	fl := flag.NewFlagSet(name, flag.ContinueOnError)
-	fl.SetOutput(stderr)
-	fl.Usage = func() {} // the caller prints the usage of catnip
+	fl := newFlags(name, stderr)
 	fl.BoolVar(&showFixDiff, "show-fix-diff", false, "also print what each fixer changed")
 	err = fl.Parse(args)
 	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
@@ -221,8 +292,7 @@ func dashed(name string) string {
 func write(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.Call) int {
 	showFixDiff, args, err := fixFlags("write", args, stderr, call)
 	if err != nil || len(args) != 1 {
-		fmt.Fprint(stderr, usage)
-		return badUsage
+		return usageError(err, writeHelp, stdout, stderr)
 	}
 	path := args[0]
 	call.File = path
@@ -289,9 +359,9 @@ func commit(cfg *config.Config, path string, before, after []byte, showFixDiff b
 }
 
 func statsCmd(args []string, stdout, stderr io.Writer) int {
-	if len(args) > 0 {
-		fmt.Fprint(stderr, usage)
-		return badUsage
+	fl := newFlags("stats", stderr)
+	if err := fl.Parse(args); err != nil || fl.NArg() > 0 {
+		return usageError(err, statsHelp, stdout, stderr)
 	}
 	db, err := stats.Path()
 	if err == nil {

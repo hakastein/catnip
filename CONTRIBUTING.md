@@ -16,7 +16,8 @@ make go   # gofmt, go vet, go test; сборка без CGO
 ```
 
 CI гоняет то же на Linux, macOS и Windows. Правила кода и тестов — [`AGENTS.md`](AGENTS.md). Изменение поведения
-отражается в `catnip help`, [README](README.md), [скилле](skills/catnip/SKILL.md) и [CHANGELOG](CHANGELOG.md).
+отражается в справке команды (`catnip <команда> --help`), [README](README.md), [скилле](skills/catnip/SKILL.md) и
+[CHANGELOG](CHANGELOG.md).
 
 ## Релизы
 
