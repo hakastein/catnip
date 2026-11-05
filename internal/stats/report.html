@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>catnip stats</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.6.1/dist/chart.umd.min.js" integrity="sha384-Emf5ZVIUiarAdhkgtqK+5/Z5qIvM6QoVrS+qAVtfyZVuD5lIHrac0me485+Antp0" crossorigin="anonymous"></script>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 2em auto; max-width: 1200px; padding: 0 1em; color: #222; }
+  h2 { margin-top: 2em; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border-bottom: 1px solid #ddd; padding: .3em .8em; text-align: left; vertical-align: top; }
+  th { background: #f4f4f4; white-space: nowrap; }
+  td { white-space: pre-wrap; word-break: break-all; }
+  .chart { height: 320px; }
+</style>
+</head>
+<body>
+<h1>catnip stats</h1>
+<p id="summary"></p>
+
+<h2>Calls by day</h2>
+<div class="chart"><canvas id="days"></canvas></div>
+
+<h2>Projects</h2>
+<table id="projects"></table>
+
+<h2>Working directories</h2>
+<table id="dirs"></table>
+
+<h2>Exit codes</h2>
+<div class="chart"><canvas id="codes"></canvas></div>
+
+<h2>Flags</h2>
+<div class="chart"><canvas id="flags"></canvas></div>
+
+<h2>Last failed calls, codes 1 and 2</h2>
+<table id="failures"></table>
+
+<h2>Commands catnip does not have</h2>
+<table id="commands"></table>
+
+<script>
+const data = {{.}};
+const local = t => t ? new Date(t).toLocaleString() : '';
+
+function table(id, head, rows) {
+  const t = document.getElementById(id);
+  const tr = (cells, tag) => {
+    const r = document.createElement('tr');
+    for (const c of cells) {
+      const d = document.createElement(tag);
+      d.textContent = c ?? '';
+      r.append(d);
+    }
+    return r;
+  };
+  t.append(tr(head, 'th'));
+  for (const r of rows || []) t.append(tr(r, 'td'));
+}
+
+// pivot turns rows of [x, series, n] into Chart.js labels and one dataset per series.
+function pivot(rows, name) {
+  rows = rows || [];
+  const xs = [...new Set(rows.map(r => r[0]))], ss = [...new Set(rows.map(r => r[1]))];
+  return {
+    labels: xs,
+    datasets: ss.map(s => ({label: name(s), data: xs.map(x => (rows.find(r => r[0] === x && r[1] === s) || [0, 0, 0])[2])})),
+  };
+}
+
+function chart(id, type, chartData, options) {
+  if (!window.Chart) {
+    document.getElementById(id).replaceWith('Chart.js did not load from jsDelivr.');
+    return;
+  }
+  new Chart(document.getElementById(id), {type, data: chartData, options: {animation: false, maintainAspectRatio: false, ...options}});
+}
+
+const [calls, projects, first, last] = data.Summary[0];
+document.getElementById('summary').textContent = `calls: ${calls}, projects: ${projects}, from ${local(first)} to ${local(last)}`;
+
+const stacked = {scales: {x: {stacked: true}, y: {stacked: true}}};
+chart('days', 'bar', pivot(data.Days, s => s), stacked);
+table('projects', ['git root', 'catnip root', 'calls', 'show', 'edit', 'write', 'exit code not 0'], data.Projects);
+table('dirs', ['cwd', 'calls'], data.Dirs);
+chart('codes', 'bar', pivot(data.Codes, s => `exit ${s}`), stacked);
+chart('flags', 'bar', {
+  labels: (data.Flags || []).map(r => r[0]),
+  datasets: [{label: 'uses', data: (data.Flags || []).map(r => r[1])}],
+}, {indexAxis: 'y'});
+table('failures', ['time', 'command', 'cwd', 'file', 'exit code', 'argv'], (data.Failures || []).map(r => [local(r[0]), ...r.slice(1)]));
+table('commands', ['command', 'calls'], data.Commands);
+</script>
+</body>
+</html>

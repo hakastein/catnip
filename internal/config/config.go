@@ -41,7 +41,7 @@ const ProjectFile = ".catnip.json"
 
 // Load reads the global config (<user config dir>/catnip/config.json) and the nearest project config from dir up. A project rule replaces the global rule for the same glob. A missing file is no rules.
 func Load(dir string) (*Config, error) {
-	c := &Config{Root: root(dir), rules: map[string]Rule{}}
+	c := &Config{Root: Find(dir, ProjectFile), rules: map[string]Rule{}}
 	d, err := os.UserConfigDir()
 	if err != nil {
 		return nil, fmt.Errorf("user config directory: %w", err)
@@ -138,14 +138,14 @@ func commands(named map[string]string, file string) []Command {
 	return out
 }
 
-// root is the nearest directory from dir up that holds the project config, or "".
-func root(dir string) string {
+// Find is the nearest directory from dir up that holds name, or "".
+func Find(dir, name string) string {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
 		return ""
 	}
 	for {
-		if _, err := os.Stat(filepath.Join(dir, ProjectFile)); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)

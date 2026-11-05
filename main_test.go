@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hakastein/catnip/internal/stats"
 )
 
 func TestRun(t *testing.T) {
@@ -64,6 +66,8 @@ func TestRun(t *testing.T) {
 			after:   "B\n",
 			tail:    "up: fixed\np/a.txt:1\n-\tb\n+\tB\n",
 		},
+		{name: "stats with an unknown flag", project: `{}`, before: "a\n", args: []string{"stats", "--all"}, code: badUsage, after: "a\n"},
+		{name: "stats without a database", project: `{}`, before: "a\n", args: []string{"stats"}, code: notApplied, after: "a\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -77,7 +81,7 @@ func TestRun(t *testing.T) {
 			require.NoError(t, os.WriteFile("p/a.txt", []byte(tt.before), 0o644))
 			var stdout, stderr bytes.Buffer
 
-			code := run(tt.args, strings.NewReader(tt.stdin), &stdout, &stderr)
+			code := run(tt.args, strings.NewReader(tt.stdin), &stdout, &stderr, &stats.Call{})
 
 			assert.Equal(t, tt.code, code, "stdout: %s\nstderr: %s", stdout.String(), stderr.String())
 			got, err := os.ReadFile("p/a.txt")
