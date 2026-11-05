@@ -146,6 +146,7 @@ func TestRecordError(t *testing.T) {
 			want:   "<file>: edit <n>: not found: <text>",
 		},
 		{name: "unknown command", err: "unknown command \"grep\"\n", stored: `unknown command "grep"`, want: "unknown command <text>"},
+		{name: "cut text", err: "--replace \"\" \"abc\"…: OLD is empty\n", stored: `--replace "" "abc"…: OLD is empty`, want: "--replace <text> <text>: OLD is empty"},
 		{name: "invented flag stays in the group", err: "flag provided but not defined: -all\n", stored: "flag provided but not defined: -all", want: "flag provided but not defined: -all"},
 		{name: "short file name only as a whole path", err: "open e: no such file or directory", file: "e", stored: "open e: no such file or directory", want: "open <file>: no such file or directory"},
 		{

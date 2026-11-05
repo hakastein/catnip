@@ -1,17 +1,17 @@
 ---
 name: catnip
-description: "Use when reading or editing files from the shell. catnip shows line ranges and applies several exact replacements to a file at once, all or none."
+description: "Use before any shell command that prints part of a file or writes one — sed -n/-i, cat -n, head/tail, heredoc, python."
 ---
 
 # catnip
 
 `catnip` читает и правит файлы одной bash-командой и сцепляется через `&&`. Используй его вместо `sed -n`, `cat -n`,
-`sed -i`, heredoc в файл и python-скриптов с `str.replace`.
+`sed -i`, heredoc в файл и python-скриптов с `str.replace`. Справка команды — `catnip <команда> --help`.
 
 ## Просмотр
 
 ```bash
-catnip show src/a.php                     # весь файл, у каждой строки адрес 57#a3f0
+catnip show src/a.php                     # весь файл; адрес строки 57#a3f0 печатается без флагов
 catnip show src/a.php:40-80               # диапазон
 catnip show src/a.php:57                  # позиция и 5 строк вокруг; -C N меняет окрестность
 catnip show src/a.php:57:12               # позиция с колонкой, как её печатают инструменты на LSP
@@ -39,7 +39,7 @@ catnip edit src/a.php \
   найтись ровно один раз, с `--count N` сразу после — ровно N раз (заменяются все).
 - `--lines FROM#HASH[-TO#HASH] NEW` — заменить целые строки по адресам из `show`. Если крайняя строка диапазона
   изменилась, правка отклоняется; середину диапазона catnip не сверяет. Когда важно, что весь блок не менялся,
-  используй `--replace` с его полным текстом. Пустой `NEW` удаляет строки.
+  используй `--replace` с его полным текстом.
 - `--after LINE#HASH NEW`, `--before LINE#HASH NEW` — вставить целые строки после или перед строкой; если она
   изменилась, правка отклоняется.
 - Все правки адресуют исходное содержимое файла: номера строк из `show` действуют для всей команды; пересекающиеся

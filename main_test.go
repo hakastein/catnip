@@ -25,6 +25,8 @@ func TestRun(t *testing.T) {
 		tail    string // the end of stdout
 	}{
 		{name: "edit applied", project: `{"*.txt": {"check": {"ok": "grep -q b {file}"}}}`, before: "a\n", args: []string{"edit", "p/a.txt", "--replace", "a", "b"}, code: ok, after: "b\n"},
+		{name: "replace with an empty NEW deletes", project: `{}`, before: "ab\n", args: []string{"edit", "p/a.txt", "--replace", "b", ""}, code: ok, after: "a\n"},
+		{name: "replace with an empty OLD", project: `{}`, before: "ab\n", args: []string{"edit", "p/a.txt", "--replace", "", "b"}, code: badUsage, after: "ab\n"},
 		{
 			name:    "several edits applied",
 			project: `{}`,
@@ -73,6 +75,15 @@ func TestRun(t *testing.T) {
 		},
 		{name: "stats with an unknown flag", project: `{}`, before: "a\n", args: []string{"stats", "--all"}, code: badUsage, after: "a\n"},
 		{name: "stats without a database", project: `{}`, before: "a\n", args: []string{"stats"}, code: notApplied, after: "a\n"},
+		{name: "help of catnip", project: `{}`, before: "a\n", args: []string{"--help"}, code: ok, after: "a\n", tail: usage},
+		{name: "no command", project: `{}`, before: "a\n", args: []string{}, code: badUsage, after: "a\n"},
+		{name: "help of a command", project: `{}`, before: "a\n", args: []string{"help", "edit"}, code: ok, after: "a\n", tail: editHelp},
+		{name: "help of an unknown command", project: `{}`, before: "a\n", args: []string{"help", "cat"}, code: badUsage, after: "a\n"},
+		{name: "show --help", project: `{}`, before: "a\n", args: []string{"show", "p/a.txt", "--help"}, code: ok, after: "a\n", tail: showHelp},
+		{name: "edit --help", project: `{}`, before: "a\n", args: []string{"edit", "--help"}, code: ok, after: "a\n", tail: editHelp},
+		{name: "edit --help after the path", project: `{}`, before: "a\n", args: []string{"edit", "p/a.txt", "--help"}, code: ok, after: "a\n", tail: editHelp},
+		{name: "write -h", project: `{}`, before: "a\n", args: []string{"write", "-h"}, code: ok, after: "a\n", tail: writeHelp},
+		{name: "stats --help", project: `{}`, before: "a\n", args: []string{"stats", "--help"}, code: ok, after: "a\n", tail: statsHelp},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

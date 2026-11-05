@@ -38,7 +38,7 @@ type Call struct {
 	File string
 	// Flags are the recognized flags.
 	Flags []string
-	// Error is what the call wrote to stderr, without the usage text.
+	// Error is what the call wrote to stderr, without the help text.
 	Error string
 }
 
@@ -142,7 +142,7 @@ func Record(path string, c Call, code int, limit int64) error {
 }
 
 var (
-	quoted  = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+	quoted  = regexp.MustCompile(`"(?:[^"\\]|\\.)*"…?`) // … marks text cut in an error
 	address = regexp.MustCompile(`\b\d+#[0-9a-f]{4}\b`)
 	number  = regexp.MustCompile(`\d+`)
 )

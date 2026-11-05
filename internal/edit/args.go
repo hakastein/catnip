@@ -1,6 +1,7 @@
 package edit
 
 import (
+	"flag"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -16,18 +17,18 @@ var lineRange = regexp.MustCompile(`^(\d+)#([0-9a-f]{4})(?:-(\d+)#([0-9a-f]{4}))
 //	--after LINE#HASH NEW           insert whole lines after the line that still has this hash
 //	--before LINE#HASH NEW          insert whole lines before it
 //
-// Values are taken as they are, also when they start with "--".
+// Values are taken as they are, also when they start with "--". -h or --help in place of an edit is flag.ErrHelp.
 func ParseArgs(args []string) ([]Op, error) {
 	var ops []Op
 	for i := 0; i < len(args); {
 		switch name := args[i]; name {
 		case "--replace":
 			if i+2 >= len(args) {
-				return nil, fmt.Errorf("--replace needs OLD and NEW")
+				return nil, fmt.Errorf("%s: want OLD and NEW", typed(args[i:]))
 			}
 			op := Op{Old: args[i+1], New: args[i+2], Count: 1}
 			if op.Old == "" {
-				return nil, fmt.Errorf("--replace: empty text to find")
+				return nil, fmt.Errorf("%s: OLD, the text to find, is empty; OLD goes first, NEW second", typed(args[i:i+3]))
 			}
 			i += 3
 			if i < len(args) && args[i] == "--count" {
@@ -44,7 +45,7 @@ func ParseArgs(args []string) ([]Op, error) {
 			ops = append(ops, op)
 		case "--lines":
 			if i+2 >= len(args) {
-				return nil, fmt.Errorf("--lines needs FROM#HASH[-TO#HASH] and NEW")
+				return nil, fmt.Errorf("%s: want FROM#HASH[-TO#HASH] and NEW", typed(args[i:]))
 			}
 			r, err := parseRange(name, "FROM#HASH[-TO#HASH]", args[i+1])
 			if err != nil {
@@ -54,7 +55,7 @@ func ParseArgs(args []string) ([]Op, error) {
 			i += 3
 		case "--after", "--before":
 			if i+2 >= len(args) {
-				return nil, fmt.Errorf("%s needs LINE#HASH and NEW", name)
+				return nil, fmt.Errorf("%s: want LINE#HASH and NEW", typed(args[i:]))
 			}
 			if strings.Contains(args[i+1], "-") && lineRange.MatchString(args[i+1]) {
 				return nil, fmt.Errorf("%s: %q is a range, want one LINE#HASH", name, args[i+1])
@@ -64,12 +65,14 @@ func ParseArgs(args []string) ([]Op, error) {
 				return nil, err
 			}
 			if args[i+2] == "" {
-				return nil, fmt.Errorf("%s: empty NEW inserts nothing", name)
+				return nil, fmt.Errorf("%s: empty NEW inserts nothing", typed(args[i:i+3]))
 			}
 			ops = append(ops, Op{Insert: &Anchor{Line: r.From, Hash: r.FromHash, After: name == "--after"}, New: args[i+2]})
 			i += 3
 		case "--count":
 			return nil, fmt.Errorf("--count goes right after a --replace")
+		case "-h", "--help":
+			return nil, flag.ErrHelp
 		default:
 			return nil, fmt.Errorf("unexpected %q: want --replace, --lines, --after or --before", args[i])
 		}
@@ -78,6 +81,20 @@ func ParseArgs(args []string) ([]Op, error) {
 		return nil, fmt.Errorf("no edits: want --replace OLD NEW, --lines FROM#HASH[-TO#HASH] NEW, --after LINE#HASH NEW or --before LINE#HASH NEW")
 	}
 	return ops, nil
+}
+
+// typed is an edit as it was given, for an error to point at: the name, then each value quoted and cut to 40
+// characters.
+func typed(edit []string) string {
+	s := edit[0]
+	for _, v := range edit[1:] {
+		if r := []rune(v); len(r) > 40 {
+			s += " " + strconv.Quote(string(r[:40])) + "…"
+		} else {
+			s += " " + strconv.Quote(v)
+		}
+	}
+	return s
 }
 
 // parseRange reads FROM#HASH[-TO#HASH], the line addresses catnip show prints, for the edit named name that
