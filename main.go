@@ -48,9 +48,9 @@ const editOps = `  --replace OLD NEW [--count N]    replace the text OLD found e
 
 const usage = `catnip shows and edits files from the shell; commands chain with && by their exit codes.
 
-catnip show <path>[:<from>-<to> | :<line>]
+catnip show <path>[:<from>-<to> | :<line>[:<column>]]
   print the file, its lines <from> to <to>, or line <line> with 5 lines on each side;
-  each line comes after its address <line>#<hash>, which catnip edit takes
+  by default each line comes after its address <line>#<hash>, which catnip edit takes
 
 catnip edit <path> <edit>...
   apply the edits to the file: all of them, or none if any does not match; every edit
