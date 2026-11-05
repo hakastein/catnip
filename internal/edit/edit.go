@@ -228,9 +228,13 @@ func resolveLines(text string, op Op) ([]change, string) {
 	start := offset(lines, r.From)
 	end := offset(lines, r.To+1)
 	// New text is whole lines: it ends with a terminator unless it replaces an unterminated last line, and deleting
-	// that line also drops the terminator before it, so the file still ends without one.
+	// that line also drops the terminator before it, so the file still ends without one. An empty last new line exists
+	// only with a terminator after it.
 	newText := strings.TrimSuffix(op.New, "\n")
 	if end > len(text) {
+		if op.New != "" && (newText == "" || strings.HasSuffix(newText, "\n")) {
+			newText += "\n"
+		}
 		return []change{{start: start, end: len(text), text: newText, chop: op.New == ""}}, ""
 	}
 	if op.New != "" {
