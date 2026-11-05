@@ -36,7 +36,7 @@ func TestParseArgs(t *testing.T) {
 		},
 		{name: "no edits", args: nil, err: "no edits: want --replace OLD NEW, --lines FROM#HASH[-TO#HASH] NEW, --after LINE#HASH NEW or --before LINE#HASH NEW"},
 		{name: "replace without new", args: []string{"--replace", "a"}, err: "--replace needs OLD and NEW"},
-		{name: "empty text to find", args: []string{"--replace", "", "b"}, err: "--replace: empty text to find"},
+		{name: "empty text to find", args: []string{"--replace", "", "b"}, err: "--replace: OLD is empty; the text to find goes first: --replace OLD NEW"},
 		{name: "count without number", args: []string{"--replace", "a", "b", "--count"}, err: "--count needs N"},
 		{name: "bad count", args: []string{"--replace", "a", "b", "--count", "0"}, err: `--count: bad number "0"`},
 		{name: "count not after replace", args: []string{"--lines", "1#0000", "x", "--count", "2"}, err: "--count goes right after a --replace"},

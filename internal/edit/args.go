@@ -28,7 +28,7 @@ func ParseArgs(args []string) ([]Op, error) {
 			}
 			op := Op{Old: args[i+1], New: args[i+2], Count: 1}
 			if op.Old == "" {
-				return nil, fmt.Errorf("--replace: empty text to find")
+				return nil, fmt.Errorf("--replace: OLD is empty; the text to find goes first: --replace OLD NEW")
 			}
 			i += 3
 			if i < len(args) && args[i] == "--count" {

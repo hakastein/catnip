@@ -43,7 +43,7 @@ const editOps = `  --replace OLD NEW [--count N]    replace the text OLD found e
   --lines FROM#HASH[-TO#HASH] NEW  replace whole lines, addressed as catnip show prints them
   --after LINE#HASH NEW            insert lines after the line
   --before LINE#HASH NEW           insert lines before the line
-  an empty NEW deletes; --after and --before need a non-empty NEW
+  an empty NEW deletes OLD or the lines; --after and --before need a non-empty NEW
 `
 
 const usage = `catnip shows and edits files from the shell; commands chain with && by their exit codes.

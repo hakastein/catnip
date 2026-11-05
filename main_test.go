@@ -25,6 +25,8 @@ func TestRun(t *testing.T) {
 		tail    string // the end of stdout
 	}{
 		{name: "edit applied", project: `{"*.txt": {"check": {"ok": "grep -q b {file}"}}}`, before: "a\n", args: []string{"edit", "p/a.txt", "--replace", "a", "b"}, code: ok, after: "b\n"},
+		{name: "replace with an empty NEW deletes", project: `{}`, before: "ab\n", args: []string{"edit", "p/a.txt", "--replace", "b", ""}, code: ok, after: "a\n"},
+		{name: "replace with an empty OLD", project: `{}`, before: "ab\n", args: []string{"edit", "p/a.txt", "--replace", "", "b"}, code: badUsage, after: "ab\n"},
 		{
 			name:    "several edits applied",
 			project: `{}`,
