@@ -54,15 +54,15 @@ catnip show <path>[:40-80 | :57]
 
 catnip edit <path> <edit>...
   apply the edits to the file: all of them, or none if any does not match; every edit
-  addresses the file as it was before the command
+  addresses the file as it was before the command; OLD and NEW may span several lines
 ` + editOps + `
 catnip write <path> < content
-  write stdin to the file, creating it if missing
+  replace the file with stdin, creating it if missing
 
 catnip stats
   open a report on recorded catnip calls in the browser
 
-After edit and write catnip prints the changed lines and runs the fixers and checks
+After edit and write catnip prints what changed and runs the fixers and checks
 configured for the file. catnip <command> --help prints all flags of the command.
 ` + exitCodes
 
