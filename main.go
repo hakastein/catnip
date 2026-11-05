@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,17 +32,21 @@ const (
 )
 
 const usage = `usage:
-  catnip show [--hash] [--blame] [-C N] <path>[:<from>-<to> | :<line>[:<column>]]
+  catnip show [--gutter hash|line|none] [--blame] [-C N] <path>[:<from>-<to> | :<line>[:<column>]]
   catnip edit [--show-fix-diff] <path> <edit>...
   catnip write [--show-fix-diff] <path> < content
   catnip stats [--days N]
 
+show prints each line after its address <line>#<hash>; --gutter line prints the line number alone,
+  --gutter none the text alone
 --show-fix-diff also prints what each fixer changed
 
 edits, any number, all or none applied:
   --replace OLD NEW [--count N]    replace exact text that occurs N times (default 1)
-  --lines FROM#HASH[-TO#HASH] NEW  replace whole lines; FROM#HASH as catnip show --hash prints it
-  an empty NEW deletes
+  --lines FROM#HASH[-TO#HASH] NEW  replace whole lines; FROM#HASH as catnip show prints it
+  --after LINE#HASH NEW            insert whole lines after the line
+  --before LINE#HASH NEW           insert whole lines before the line
+  an empty NEW deletes; --after and --before need a non-empty NEW
 
 stats writes an HTML report on every recorded call, or those of the last N days, prints its
   path and opens it; every other call is recorded in <user config dir>/catnip/stats.db
@@ -87,7 +92,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.C
 func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 	fl := flag.NewFlagSet("show", flag.ContinueOnError)
 	fl.SetOutput(stderr)
-	hash := fl.Bool("hash", false, "add the content hash of each line")
+	gutter := fl.String("gutter", "hash", "before each line: hash (<n>#<hash>), line (<n>) or none")
 	blame := fl.Bool("blame", false, "add git blame of each line")
 	context := fl.Int("C", 5, "lines of context around a position")
 	var pos []string
@@ -96,7 +101,7 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 		pos = append(pos, fl.Arg(0))
 		err = fl.Parse(fl.Args()[1:])
 	}
-	if err != nil || len(pos) != 1 || *context < 0 {
+	if err != nil || len(pos) != 1 || *context < 0 || !slices.Contains(view.Gutters, *gutter) {
 		fmt.Fprint(stderr, usage)
 		return badUsage
 	}
@@ -124,7 +129,7 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 			return notApplied
 		}
 	}
-	out, err := view.Render(text, t, *hash, notes)
+	out, err := view.Render(text, t, *gutter, notes)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return notApplied
@@ -150,6 +155,10 @@ func editCmd(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 		switch {
 		case op.Lines != nil:
 			call.Flags = append(call.Flags, "--lines")
+		case op.Insert != nil && op.Insert.After:
+			call.Flags = append(call.Flags, "--after")
+		case op.Insert != nil:
+			call.Flags = append(call.Flags, "--before")
 		case op.Count != 1:
 			call.Flags = append(call.Flags, "--replace", "--count")
 		default:

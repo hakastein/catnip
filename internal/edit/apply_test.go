@@ -12,6 +12,14 @@ func lines(from int, fromLine string, to int, toLine string) *edit.LineRange {
 	return &edit.LineRange{From: from, To: to, FromHash: edit.Hash(fromLine), ToHash: edit.Hash(toLine)}
 }
 
+func after(line int, text string) *edit.Anchor {
+	return &edit.Anchor{Line: line, Hash: edit.Hash(text), After: true}
+}
+
+func before(line int, text string) *edit.Anchor {
+	return &edit.Anchor{Line: line, Hash: edit.Hash(text)}
+}
+
 func fail(op int, reason string) []edit.Failure {
 	return []edit.Failure{{Op: op, Reason: reason}}
 }
@@ -279,6 +287,85 @@ func TestApply(t *testing.T) {
 			file: "a\nb",
 			ops:  []edit.Op{{Old: "a", New: "A", Count: 1}},
 			want: "A\nb",
+		},
+		{
+			name: "lines inserted after and before a line",
+			file: "a\nb\nc\n",
+			ops: []edit.Op{
+				{Insert: after(1, "a"), New: "a2\na3"},
+				{Insert: before(3, "c"), New: "c0\n"},
+			},
+			want: "a\na2\na3\nb\nc0\nc\n",
+		},
+		{
+			name: "insert before the first line and after the last",
+			file: "a\n",
+			ops:  []edit.Op{{Insert: before(1, "a"), New: "0"}, {Insert: after(1, "a"), New: "z"}},
+			want: "0\na\nz\n",
+		},
+		{
+			name: "insert after an unterminated last line keeps it unterminated",
+			file: "a\nb",
+			ops:  []edit.Op{{Insert: after(2, "b"), New: "c\n"}},
+			want: "a\nb\nc",
+		},
+		{
+			name: "insert before an unterminated last line",
+			file: "a\nb",
+			ops:  []edit.Op{{Insert: before(2, "b"), New: "x"}},
+			want: "a\nx\nb",
+		},
+		{
+			name: "inserts at one place keep their order",
+			file: "a\nb\n",
+			ops:  []edit.Op{{Insert: after(1, "a"), New: "x"}, {Insert: before(2, "b"), New: "y"}},
+			want: "a\nx\ny\nb\n",
+		},
+		{
+			name: "insert next to a replaced range",
+			file: "a\nb\nc\nd\n",
+			ops: []edit.Op{
+				{Lines: lines(2, "b", 3, "c"), New: "B"},
+				{Insert: after(1, "a"), New: "x"},
+				{Insert: after(3, "c"), New: "y"},
+			},
+			want: "a\nx\nB\ny\nd\n",
+		},
+		{
+			name:  "insert inside a replaced range",
+			file:  "a\nb\nc\n",
+			ops:   []edit.Op{{Lines: lines(1, "a", 3, "c"), New: "x"}, {Insert: after(2, "b"), New: "y"}},
+			fails: fail(1, "overlaps edit 1"),
+		},
+		{
+			name:  "insert after a deleted unterminated last line",
+			file:  "a\nb",
+			ops:   []edit.Op{{Lines: lines(2, "b", 2, "b")}, {Insert: after(2, "b"), New: "y"}},
+			fails: fail(1, "overlaps edit 1"),
+		},
+		{
+			name: "insert into a CRLF file",
+			file: "a\r\nb\r\n",
+			ops:  []edit.Op{{Insert: after(1, "a"), New: "x\r\ny"}},
+			want: "a\r\nx\r\ny\r\nb\r\n",
+		},
+		{
+			name:  "insert at a changed line shows the current line",
+			file:  "a\nb\n",
+			ops:   []edit.Op{{Insert: after(2, "old b"), New: "x"}},
+			fails: fail(0, "line 2 changed: 2#"+edit.Hash("b")+"\tb"),
+		},
+		{
+			name:  "insert past the end",
+			file:  "a\n",
+			ops:   []edit.Op{{Insert: before(2, ""), New: "x"}},
+			fails: fail(0, "line 2 is past the end: the file has 1 lines"),
+		},
+		{
+			name:  "insert into an empty file",
+			file:  "",
+			ops:   []edit.Op{{Insert: after(1, ""), New: "x"}},
+			fails: fail(0, "line 1 is past the end: the file has 0 lines"),
 		},
 	}
 	for _, tt := range tests {

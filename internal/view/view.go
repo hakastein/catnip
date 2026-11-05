@@ -44,9 +44,12 @@ func ParseTarget(s string, context int) (Target, error) {
 	return Target{Path: m[1], From: max(1, a-context), To: a + context, Line: a}, nil
 }
 
-// Render prints the target's lines of decoded text as "<n>[#hash][\t<blame>]\t<line>". blame, when given, holds
-// one annotation per line of the target.
-func Render(text string, t Target, hash bool, blame []string) (string, error) {
+// Gutters are what Render prints before each line: its address <n>#<hash>, its number, or nothing.
+var Gutters = []string{"hash", "line", "none"}
+
+// Render prints the target's lines of decoded text as "[<gutter>\t][<blame>\t]<line>", gutter one of Gutters.
+// blame, when given, holds one annotation per line of the target.
+func Render(text string, t Target, gutter string, blame []string) (string, error) {
 	lines := edit.Lines(text)
 	from, to, err := t.Lines(len(lines))
 	if err != nil {
@@ -55,14 +58,17 @@ func Render(text string, t Target, hash bool, blame []string) (string, error) {
 	width := len(strconv.Itoa(to))
 	var b strings.Builder
 	for n := from; n <= to; n++ {
-		fmt.Fprintf(&b, "%*d", width, n)
-		if hash {
-			b.WriteString("#" + edit.Hash(lines[n-1]))
+		if gutter != "none" {
+			fmt.Fprintf(&b, "%*d", width, n)
+			if gutter == "hash" {
+				b.WriteString("#" + edit.Hash(lines[n-1]))
+			}
+			b.WriteString("\t")
 		}
 		if blame != nil {
-			b.WriteString("\t" + blame[n-from])
+			b.WriteString(blame[n-from] + "\t")
 		}
-		b.WriteString("\t" + lines[n-1] + "\n")
+		b.WriteString(lines[n-1] + "\n")
 	}
 	return b.String(), nil
 }
