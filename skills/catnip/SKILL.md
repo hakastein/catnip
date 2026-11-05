@@ -1,6 +1,6 @@
 ---
 name: catnip
-description: "Use when reading or editing files from the shell. catnip shows line ranges and applies several exact replacements to a file at once, all or none."
+description: "Use before any shell command that prints part of a file or writes one — sed -n/-i, cat -n, head/tail, heredoc, python."
 ---
 
 # catnip
