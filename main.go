@@ -27,7 +27,7 @@ import (
 
 // Exit codes.
 const (
-	ok          = 0 // written, checks passed
+	ok          = 0 // done, checks passed
 	notApplied  = 1 // nothing written
 	badUsage    = 2 // bad arguments or config
 	checkFailed = 3 // written, but a fixer or check failed or the file was written in part
@@ -98,7 +98,7 @@ prints the address and opens it in the browser. Every other call is recorded in
 
 usage: catnip stats
 
-exit: 1 no recorded calls or the server stopped, 2 bad arguments
+exit: 1 no stats database or the server stopped, 2 bad arguments
 `
 
 // helps are the helps of the commands by name.
