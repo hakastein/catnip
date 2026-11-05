@@ -1,6 +1,7 @@
 package edit
 
 import (
+	"flag"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -16,7 +17,7 @@ var lineRange = regexp.MustCompile(`^(\d+)#([0-9a-f]{4})(?:-(\d+)#([0-9a-f]{4}))
 //	--after LINE#HASH NEW           insert whole lines after the line that still has this hash
 //	--before LINE#HASH NEW          insert whole lines before it
 //
-// Values are taken as they are, also when they start with "--".
+// Values are taken as they are, also when they start with "--". -h or --help in place of an edit is flag.ErrHelp.
 func ParseArgs(args []string) ([]Op, error) {
 	var ops []Op
 	for i := 0; i < len(args); {
@@ -70,6 +71,8 @@ func ParseArgs(args []string) ([]Op, error) {
 			i += 3
 		case "--count":
 			return nil, fmt.Errorf("--count goes right after a --replace")
+		case "-h", "--help":
+			return nil, flag.ErrHelp
 		default:
 			return nil, fmt.Errorf("unexpected %q: want --replace, --lines, --after or --before", args[i])
 		}

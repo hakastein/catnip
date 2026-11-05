@@ -55,6 +55,7 @@ func TestParseArgs(t *testing.T) {
 		{name: "insert at line zero", args: []string{"--after", "0#0000", "x"}, err: `--after: "0#0000": lines start at 1`},
 		{name: "empty insert", args: []string{"--before", "1#0000", ""}, err: "--before: empty NEW inserts nothing"},
 		{name: "unknown argument", args: []string{"--middle", "a", "b"}, err: `unexpected "--middle": want --replace, --lines, --after or --before`},
+		{name: "help in place of an edit", args: []string{"--replace", "--help", "b", "--help"}, err: "flag: help requested"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

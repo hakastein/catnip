@@ -38,7 +38,7 @@ type Call struct {
 	File string
 	// Flags are the recognized flags.
 	Flags []string
-	// Error is what the call wrote to stderr, without the usage text.
+	// Error is what the call wrote to stderr, without the help text.
 	Error string
 }
 

@@ -11,7 +11,7 @@ description: "Use when reading or editing files from the shell. catnip shows lin
 ## Просмотр
 
 ```bash
-catnip show src/a.php                     # весь файл, у каждой строки адрес 57#a3f0 без флагов
+catnip show src/a.php                     # весь файл; адрес строки 57#a3f0 печатается без флагов
 catnip show src/a.php:40-80               # диапазон
 catnip show src/a.php:57                  # позиция и 5 строк вокруг; -C N меняет окрестность
 catnip show src/a.php:57:12               # позиция с колонкой, как её печатают инструменты на LSP
