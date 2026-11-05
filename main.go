@@ -334,7 +334,14 @@ func browse(file string) {
 		cmd = exec.Command("wslview", file)
 	default:
 		if win, err := exec.Command("wslpath", "-w", file).Output(); err == nil {
-			cmd = exec.Command("explorer.exe", strings.TrimSpace(string(win)))
+			explorer := "explorer.exe"
+			if _, err := exec.LookPath(explorer); err != nil {
+				// WSL with [interop] appendWindowsPath = false has no Windows directories in PATH
+				if p, err := exec.Command("wslpath", "-u", `C:\Windows\explorer.exe`).Output(); err == nil {
+					explorer = strings.TrimSpace(string(p))
+				}
+			}
+			cmd = exec.Command(explorer, strings.TrimSpace(string(win)))
 		} else {
 			cmd = exec.Command("xdg-open", file)
 		}
