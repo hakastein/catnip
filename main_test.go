@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hakastein/catnip/internal/edit"
 	"github.com/hakastein/catnip/internal/stats"
 )
 
@@ -45,6 +46,10 @@ func TestRun(t *testing.T) {
 		{name: "broken config", project: `{`, before: "a\n", args: []string{"edit", "p/a.txt", "--replace", "a", "b"}, code: badUsage, after: "a\n"},
 		{name: "written, check failed", project: `{"*.txt": {"check": {"no": "false"}}}`, before: "a\n", args: []string{"write", "p/a.txt"}, stdin: "w\n", code: checkFailed, after: "w\n"},
 		{name: "show past the end", project: `{}`, before: "a\n", args: []string{"show", "p/a.txt:5"}, code: notApplied, after: "a\n"},
+		{name: "show prints line addresses", project: `{}`, before: "a\n", args: []string{"show", "p/a.txt"}, code: ok, after: "a\n", tail: "1#" + edit.Hash("a") + "\ta\n"},
+		{name: "show with an unknown gutter", project: `{}`, before: "a\n", args: []string{"show", "--gutter", "hashes", "p/a.txt"}, code: badUsage, after: "a\n"},
+		{name: "insert after a line", project: `{}`, before: "a\n", args: []string{"edit", "p/a.txt", "--after", "1#" + edit.Hash("a"), "b"}, code: ok, after: "a\nb\n"},
+		{name: "insert at a changed line: nothing applied", project: `{}`, before: "a\n", args: []string{"edit", "p/a.txt", "--before", "1#" + edit.Hash("x"), "b"}, code: notApplied, after: "a\n"},
 		{name: "write keeps BOM and CRLF of the file", project: `{}`, before: "\ufeffa\r\n", args: []string{"write", "p/a.txt"}, stdin: "b\nc\n", code: ok, after: "\ufeffb\r\nc\r\n"},
 		{name: "write keeps a missing final newline", project: `{}`, before: "a", args: []string{"write", "p/a.txt"}, stdin: "b\n", code: ok, after: "b"},
 		{

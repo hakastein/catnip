@@ -44,27 +44,30 @@ func TestRender(t *testing.T) {
 	tests := []struct {
 		name   string
 		target view.Target
-		hash   bool
+		gutter string
 		blame  []string
 		want   string
 		err    string
 	}{
-		{name: "whole file", target: view.Target{Path: "f"}, want: " 1\ta\n 2\tb\n 3\tc\n 4\td\n 5\te\n 6\tf\n 7\tg\n 8\th\n 9\ti\n10\tj\n11\tk\n"},
-		{name: "range at the end", target: view.Target{Path: "f", From: 10, To: 11}, want: "10\tj\n11\tk\n"},
-		{name: "range past the end", target: view.Target{Path: "f", From: 10, To: 12}, err: "line 12 is past the end: f has 11 lines"},
-		{name: "position context cut at the end", target: view.Target{Path: "f", From: 9, To: 13, Line: 11}, want: " 9\ti\n10\tj\n11\tk\n"},
-		{name: "position past the end", target: view.Target{Path: "f", From: 10, To: 14, Line: 12}, err: "line 12 is past the end: f has 11 lines"},
+		{name: "line addresses", target: view.Target{Path: "f", From: 1, To: 2}, gutter: "hash", want: "1#" + edit.Hash("a") + "\ta\n2#" + edit.Hash("b") + "\tb\n"},
+		{name: "whole file", target: view.Target{Path: "f"}, gutter: "line", want: " 1\ta\n 2\tb\n 3\tc\n 4\td\n 5\te\n 6\tf\n 7\tg\n 8\th\n 9\ti\n10\tj\n11\tk\n"},
+		{name: "range at the end", target: view.Target{Path: "f", From: 10, To: 11}, gutter: "line", want: "10\tj\n11\tk\n"},
+		{name: "range past the end", target: view.Target{Path: "f", From: 10, To: 12}, gutter: "line", err: "line 12 is past the end: f has 11 lines"},
+		{name: "position context cut at the end", target: view.Target{Path: "f", From: 9, To: 13, Line: 11}, gutter: "line", want: " 9\ti\n10\tj\n11\tk\n"},
+		{name: "position past the end", target: view.Target{Path: "f", From: 10, To: 14, Line: 12}, gutter: "line", err: "line 12 is past the end: f has 11 lines"},
 		{
 			name:   "hash and blame columns",
 			target: view.Target{Path: "f", From: 1, To: 2},
-			hash:   true,
+			gutter: "hash",
 			blame:  []string{"x", "y"},
 			want:   "1#" + edit.Hash("a") + "\tx\ta\n2#" + edit.Hash("b") + "\ty\tb\n",
 		},
+		{name: "text alone", target: view.Target{Path: "f", From: 9, To: 10}, gutter: "none", want: "i\nj\n"},
+		{name: "blame without a gutter", target: view.Target{Path: "f", From: 1, To: 2}, gutter: "none", blame: []string{"x", "y"}, want: "x\ta\ny\tb\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := view.Render(text, tt.target, tt.hash, tt.blame)
+			got, err := view.Render(text, tt.target, tt.gutter, tt.blame)
 			assert.Equal(t, tt.err, errText(err))
 			assert.Equal(t, tt.want, got)
 		})

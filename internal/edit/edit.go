@@ -11,7 +11,8 @@ import (
 	"github.com/pmezard/go-difflib/difflib"
 )
 
-// Op is one replacement. The target is either text (Old) or whole lines (Lines); an empty New deletes it.
+// Op is one edit. The target is text (Old), whole lines (Lines) or a place between lines (Insert). An empty New
+// deletes the text or lines; with Insert it is one empty line.
 type Op struct {
 	// Old is the exact text to find.
 	Old string
@@ -19,13 +20,22 @@ type Op struct {
 	Count int
 	// Lines addresses whole lines instead of text.
 	Lines *LineRange
-	New   string
+	// Insert puts New as whole lines next to a line instead of replacing anything.
+	Insert *Anchor
+	New    string
 }
 
 // LineRange is lines From..To (1-based, From <= To), each end checked against its Hash.
 type LineRange struct {
 	From, To         int
 	FromHash, ToHash string
+}
+
+// Anchor is the line (1-based) checked against Hash that an insertion goes after or before.
+type Anchor struct {
+	Line  int
+	Hash  string
+	After bool
 }
 
 // Failure is why the edit with index Op could not be applied.
@@ -134,9 +144,14 @@ func Apply(raw []byte, ops []Op) ([]byte, []Failure) {
 		}
 		changes = append(changes, cs...)
 	}
-	sort.SliceStable(changes, func(a, b int) bool { return changes[a].start < changes[b].start })
+	// an insertion goes before a change that starts where it is
+	sort.SliceStable(changes, func(a, b int) bool {
+		x, y := changes[a], changes[b]
+		return x.start < y.start || x.start == y.start && x.end == x.start && y.end > y.start
+	})
 	var b strings.Builder
 	pos, owner, chop := 0, -1, false
+	unterminated := !strings.HasSuffix(text, "\n")
 	for _, c := range changes {
 		if c.start < pos {
 			f := Failure{c.op, fmt.Sprintf("overlaps edit %d", owner+1)}
@@ -146,6 +161,10 @@ func Apply(raw []byte, ops []Op) ([]byte, []Failure) {
 			continue
 		}
 		b.WriteString(text[pos:c.start])
+		// after an unterminated last line an insertion starts with a line break, unless the output already ends with one
+		if unterminated && c.start == len(text) && (b.Len() == 0 || strings.HasSuffix(b.String(), "\n")) {
+			c.text = strings.TrimPrefix(c.text, "\n")
+		}
 		b.WriteString(c.text)
 		pos, owner, chop = c.end, c.op, c.chop
 	}
@@ -164,6 +183,9 @@ func Apply(raw []byte, ops []Op) ([]byte, []Failure) {
 func resolve(text string, op Op) ([]change, string) {
 	if op.Lines != nil {
 		return resolveLines(text, op)
+	}
+	if op.Insert != nil {
+		return resolveInsert(text, op)
 	}
 	if op.Old == "" {
 		return nil, "empty text to find"
@@ -195,35 +217,75 @@ func resolve(text string, op Op) ([]change, string) {
 func resolveLines(text string, op Op) ([]change, string) {
 	r := *op.Lines
 	lines := Lines(text)
-	if r.To > len(lines) {
-		return nil, fmt.Sprintf("line %d is past the end: the file has %d lines", r.To, len(lines))
-	}
 	for _, end := range []struct {
 		n    int
 		hash string
 	}{{r.From, r.FromHash}, {r.To, r.ToHash}} {
-		if got := Hash(lines[end.n-1]); got != end.hash {
-			return nil, fmt.Sprintf("line %d changed: %d#%s\t%s", end.n, end.n, got, lines[end.n-1])
+		if reason := checkLine(lines, end.n, end.hash); reason != "" {
+			return nil, reason
 		}
 	}
-	start := 0
-	for _, l := range lines[:r.From-1] {
-		start += len(l) + 1
-	}
-	end := start
-	for _, l := range lines[r.From-1 : r.To] {
-		end += len(l) + 1
-	}
+	start := offset(lines, r.From)
+	end := offset(lines, r.To+1)
 	// New text is whole lines: it ends with a terminator unless it replaces an unterminated last line, and deleting
-	// that line also drops the terminator before it, so the file still ends without one.
+	// that line also drops the terminator before it, so the file still ends without one. An empty last new line exists
+	// only with a terminator after it.
 	newText := strings.TrimSuffix(op.New, "\n")
 	if end > len(text) {
+		if op.New != "" && (newText == "" || strings.HasSuffix(newText, "\n")) {
+			newText += "\n"
+		}
 		return []change{{start: start, end: len(text), text: newText, chop: op.New == ""}}, ""
 	}
 	if op.New != "" {
 		newText += "\n"
 	}
 	return []change{{start: start, end: end, text: newText}}, ""
+}
+
+// resolveInsert puts New as whole lines after or before the anchor line. After an unterminated last line the new
+// lines go after a line break and the file still ends without one, unless the last new line is empty: such a line
+// exists only with a line break after it.
+func resolveInsert(text string, op Op) ([]change, string) {
+	a := *op.Insert
+	lines := Lines(text)
+	if reason := checkLine(lines, a.Line, a.Hash); reason != "" {
+		return nil, reason
+	}
+	newText := strings.TrimSuffix(op.New, "\n")
+	if !a.After {
+		at := offset(lines, a.Line)
+		return []change{{start: at, end: at, text: newText + "\n"}}, ""
+	}
+	at := offset(lines, a.Line+1)
+	if at > len(text) {
+		if newText == "" || strings.HasSuffix(newText, "\n") {
+			newText += "\n"
+		}
+		return []change{{start: len(text), end: len(text), text: "\n" + newText}}, ""
+	}
+	return []change{{start: at, end: at, text: newText + "\n"}}, ""
+}
+
+// checkLine is why line n (1-based) cannot be addressed by hash: past the end or changed; "" when it can.
+func checkLine(lines []string, n int, hash string) string {
+	if n > len(lines) {
+		return fmt.Sprintf("line %d is past the end: the file has %d lines", n, len(lines))
+	}
+	if got := Hash(lines[n-1]); got != hash {
+		return fmt.Sprintf("line %d changed: %d#%s\t%s", n, n, got, lines[n-1])
+	}
+	return ""
+}
+
+// offset is where line n (1-based) of decoded text starts; one past the end for the line after an unterminated last
+// line.
+func offset(lines []string, n int) int {
+	at := 0
+	for _, l := range lines[:n-1] {
+		at += len(l) + 1
+	}
+	return at
 }
 
 func lineOf(text string, offset int) int { return strings.Count(text[:offset], "\n") + 1 }
