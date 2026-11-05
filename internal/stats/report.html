@@ -21,7 +21,8 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   a { color: inherit; text-decoration: none; }
-  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  a:focus-visible, button:focus-visible, .seg button:focus-visible, .icon:focus-visible, .btn:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 
   .top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px; padding: 10px 24px;
     background: var(--bg); border-bottom: 1px solid var(--border); }
@@ -216,9 +217,9 @@ function rel(path, root) {
   for (const s of ['/', '\\']) if (path.startsWith(root + s)) return path.slice(root.length + 1);
   return path;
 }
-const shq = a => /^[\w@%+=:,./#-]+$/.test(a) ? a : "'" + a.replaceAll("'", "'\\''") + "'";
+const shq = a => /^[\w@%+=:,./-][\w@%+=:,./#-]*$/.test(a) ? a : "'" + a.replaceAll("'", "'\\''") + "'";
 const firstLine = s => (s || '').split('\n')[0];
-const periodName = () => period === '1' ? 'the last 24h' : periods.find(p => p[0] === period)[1];
+const periodName = () => ({1: 'the last 24h', 0: 'all time'})[period] ?? periods.find(p => p[0] === period)[1];
 
 // ---- pieces
 
@@ -279,17 +280,17 @@ function drawDays(box, rows) {
   let start = period === '0' ? seen[0] : addDay(today, 1 - Number(period));
   if (seen[0] < start) start = seen[0];
   const days = [];
-  for (let d = start; d <= today && days.length < 1000; d = addDay(d, 1)) days.push(d);
+  for (let d = today; d >= start && days.length < 1000; d = addDay(d, -1)) days.unshift(d);
   const codes = [...new Set(rows.map(r => r.code))].sort((a, b) => a - b);
   const css = getComputedStyle(document.documentElement);
   const color = c => css.getPropertyValue(['--o-ok', '--o-na', '--o-bu', '--o-cf'][c] || '--o-bu');
   const W = Math.max(300, box.clientWidth - 32), H = 190, L = 34, B = 20, T = 6;
   const total = d => Object.values(byDay.get(d) || {}).reduce((a, b) => a + b, 0);
   const peak = Math.max(1, ...days.map(total));
-  const step = Math.pow(10, Math.floor(Math.log10(peak))), top = Math.ceil(peak / step) * step;
+  const step = Math.pow(10, Math.floor(Math.log10(peak))), top = [1, 2, 5, 10].map(m => m * step).find(t => t >= peak);
   const y = v => T + (H - T - B) * (1 - v / top), bw = (W - L) / days.length;
   const g = svg('svg', {viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': 'calls per day'});
-  for (const v of [0, top / 2, top]) {
+  for (const v of top % 2 ? [0, top] : [0, top / 2, top]) {
     g.append(svg('line', {class: 'grid', x1: L, x2: W, y1: y(v), y2: y(v)}));
     g.append(svg('text', {class: 'axis', x: L - 6, y: y(v) + 4, 'text-anchor': 'end'}, String(Math.round(v))));
   }
@@ -380,7 +381,7 @@ const summaryKpis = (s, scope, extra = []) => kpis([
   {label: 'calls', value: fmt(s.calls), sub: `in ${periodName()}`, href: go.calls(scope)},
   {label: 'failure rate', value: pct(s.failed, s.calls), tone: tone(s.failed, s.calls), sub: `${fmt(s.failed)} failed calls`, href: go.calls({...scope, code: 'failed'})},
   ...extra,
-  {label: 'distinct errors', value: fmt(s.groups), sub: 'error groups', href: go.errors(scope)},
+  {label: 'distinct errors', value: fmt(s.groups), sub: 'error groups', href: scope.worktree ? null : go.errors(scope)},
   {label: 'files', value: fmt(s.files), sub: 'shown or edited'},
 ]);
 const projectCrumbs = (p, wt) => [[base(p), go.project(p)], wt && wt !== p && [base(wt), go.project(p, wt)]];
@@ -486,12 +487,12 @@ const pages = {
         {label: 'last call', value: ago(s.last), sub: local(s.last)},
       ]),
       h('div', {class: 'grid2'}, card('Commands', commandList(usage, {})), card('Errors', errorList(errors, {project: c?.project}, 10))),
-      card('History', callList(calls), {sub: 'every call on this file, newest first', more: calls.length >= pageSize && ['all calls', go.calls(scope)]}),
+      card('History', callList(calls), {sub: `calls on this file in ${periodName()}, newest first`, more: calls.length >= pageSize && ['all calls', go.calls(scope)]}),
     ]};
   },
 
   async call(r) {
-    const [c] = await api('calls', {id: r.arg, days: '0'});
+    const [c] = /^[1-9]\d*$/.test(r.arg) ? await api('calls', {id: r.arg, days: '0'}) : [];
     if (!c) return {crumbs: [['call']], body: [h('div', {class: 'card empty'}, 'No such call')]};
     let near = c.file ? await api('calls', {file: c.file, days: '0'}) : [];
     if (c.file && !near.some(n => n.id === c.id)) near = await api('calls', {file: c.file, days: '0', before: c.id + 1});
@@ -500,7 +501,7 @@ const pages = {
     return {crumbs: [...projectCrumbs(c.project, c.worktree), [`call ${c.id}`]], body: [
       head('catnip ' + (c.kind || ''), null, [outTag(c.code), h('span', {class: 'dim'}, local(c.time))], true),
       card('Call', callDetail(c, true)),
-      c.file && card('Same file', callList(near, c.id), {sub: 'calls on this file around this one', more: ['file history', go.file(c.file)]}),
+      c.file && card('Same file', callList(near, c.id), {sub: 'calls on this file next to this one', more: ['file history', go.file(c.file)]}),
     ]};
   },
 
@@ -533,7 +534,7 @@ const pages = {
     const what = [scope.kind && 'catnip ' + scope.kind, scope.worktree && base(scope.worktree), scope.file && base(scope.file)].filter(Boolean);
     return {crumbs: [...(r.q.project ? projectCrumbs(r.q.project, r.q.worktree) : []), ['calls']], body: [
       head(['Calls', ...what].join(' · '), scope.group || scope.file, null, !!scope.group),
-      card('', [h('nav', {class: 'tabs'}, tab('', 'all', all), failed && tab('failed', 'failed', failed),
+      card('', [h('nav', {class: 'tabs'}, tab('', 'all', all), failed > 0 && tab('failed', 'failed', failed),
         Object.keys(counts).filter(c => c !== '0').map(c => tab(c, [dot(c), outName(c)], counts[c]))), list, foot]),
     ]};
   },
@@ -576,14 +577,16 @@ function callDetail(c, full) {
 function route() {
   const [path, query] = location.hash.replace(/^#\/?/, '').split('?');
   const [page, arg] = path.split('/').map(decodeURIComponent);
-  return {page: pages[page] ? page : 'home', arg, q: Object.fromEntries(new URLSearchParams(query || ''))};
+  return {page: Object.hasOwn(pages, page) ? page : 'home', arg, q: Object.fromEntries(new URLSearchParams(query || ''))};
 }
 
 async function render() {
-  const my = ++seq, r = route();
+  const my = ++seq;
   document.body.classList.add('loading');
-  let out;
+  tip.style.display = 'none';
+  let out, r = {page: 'home'};
   try {
+    r = route();
     out = await pages[r.page](r);
   } catch (e) {
     out = {crumbs: [], body: [h('div', {class: 'card error'}, e.message)]};
@@ -621,7 +624,10 @@ function drawPeriods() {
 }
 drawPeriods();
 let resized;
-addEventListener('resize', () => { clearTimeout(resized); resized = setTimeout(render, 200); });
+addEventListener('resize', () => {
+  clearTimeout(resized);
+  resized = setTimeout(() => view.querySelectorAll('.chart').forEach(b => b.draw()), 200);
+});
 addEventListener('hashchange', render);
 render();
 </script>

@@ -235,6 +235,13 @@ func TestQuery(t *testing.T) {
 				"groups": int64(3), "first": day0, "last": later}},
 		},
 		{
+			name:   "summary of no calls",
+			view:   "summary",
+			filter: stats.Filter{Kind: "grep --all"},
+			want: []row{{"calls": int64(0), "failed": int64(0), "projects": int64(0), "worktrees": int64(0), "files": int64(0),
+				"groups": int64(0), "first": nil, "last": nil}},
+		},
+		{
 			name: "files, by calls",
 			view: "files",
 			want: []row{
