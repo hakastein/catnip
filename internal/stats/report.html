@@ -188,7 +188,7 @@ function svg(tag, attrs, ...kids) {
 }
 
 async function api(view, filter) {
-  const q = new URLSearchParams({days: period === 'h1' ? 1 / 24 : period});
+  const q = new URLSearchParams({days: period === 'h1' ? 1 / 24 : period, zone: zone()});
   for (const [k, v] of Object.entries(filter || {})) if (v != null && v !== '') q.set(k, v);
   const r = await fetch(`api/${view}?${q}`);
   if (!r.ok) throw new Error(await r.text());
@@ -299,23 +299,28 @@ const cols = (left, right) => h('div', {class: 'grid2'}, h('div', {class: 'stack
 // unit is the chart's step: a minute over the last hour, an hour over 24h, a day over longer periods. Its view is
 // minutes, hours or days.
 const unit = () => ({h1: 'minute', 1: 'hour'})[period] || 'day';
+// zone is the browser's current offset from UTC in minutes: the views key days, hours and minutes by it.
+const zone = () => -new Date().getTimezoneOffset();
 function callChart(rows) {
-  const box = h('div', {class: 'chart'});
-  box.draw = () => drawSlots(box, rows); // drawn once in the page, when its width is known
+  const box = h('div', {class: 'chart'}), at = {u: unit(), p: period, now: Date.now(), z: zone()}; // when rows were read
+  box.draw = () => drawSlots(box, rows, at); // drawn once in the page, when its width is known
   return box;
 }
 const pad = n => String(n).padStart(2, '0');
 const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-// slot is the minute, hour or day of d as its view keys it.
-const slot = (d, u) => u === 'day' ? ymd(d) : `${ymd(d)}T${pad(d.getHours())}:${u === 'hour' ? '00' : pad(d.getMinutes())}`;
-const addDay = (s, n) => { const [y, m, d] = s.split('-').map(Number); return ymd(new Date(y, m - 1, d + n)); };
+// slot is the day, hour or minute of the time t at the offset of z minutes, as its view keys it.
+const slot = (t, u, z) => {
+  const s = new Date(t + z * 60e3).toISOString();
+  return u === 'day' ? s.slice(0, 10) : u === 'hour' ? s.slice(0, 13) + ':00' : s.slice(0, 16);
+};
+const addDay = (s, n) => { const [y, m, d] = s.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
 const dayLabel = (d, o) => new Date(d + 'T12:00').toLocaleDateString(undefined, o || {month: 'short', day: 'numeric'});
 const slotLabel = (s, long) => {
   const day = long ? dayLabel(s.slice(0, 10), {weekday: 'short', month: 'short', day: 'numeric'}) : '';
   return s.length > 10 ? [day, s.slice(11)].filter(Boolean).join(' ') : day || dayLabel(s);
 };
-function drawSlots(box, rows) {
-  const u = unit(), bySlot = new Map();
+function drawSlots(box, rows, {u, p, now, z}) {
+  const bySlot = new Map();
   for (const r of rows) {
     if (!bySlot.has(r[u])) bySlot.set(r[u], {});
     bySlot.get(r[u])[r.code] = r.calls;
@@ -324,13 +329,13 @@ function drawSlots(box, rows) {
   if (!seen.length) return box.replaceChildren(h('div', {class: 'empty'}, 'No calls in this period'));
   const slots = [];
   if (u === 'day') {
-    const today = ymd(new Date());
-    let start = period === '0' ? seen[0] : addDay(today, 1 - Number(period));
+    const today = slot(now, u, z);
+    let start = p === '0' ? seen[0] : addDay(today, 1 - Number(p));
     if (seen[0] < start) start = seen[0];
     for (let d = today; d >= start && slots.length < 1000; d = addDay(d, -1)) slots.unshift(d);
   } else { // the period starts inside its first minute or hour, so that one is drawn too
     const [n, ms] = u === 'hour' ? [24, 3600e3] : [60, 60e3];
-    for (let i = n; i >= 0; i--) slots.push(slot(new Date(Date.now() - i * ms), u));
+    for (let i = 0; i <= n || slots[0] > seen[0] && slots.length < 2000; i++) slots.unshift(slot(now - i * ms, u, z));
   }
   const codes = [...new Set(rows.map(r => r.code))].sort((a, b) => a - b);
   const css = getComputedStyle(document.documentElement);

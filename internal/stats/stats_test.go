@@ -230,7 +230,7 @@ func TestQuery(t *testing.T) {
 	day0, day1, later := "2026-11-04T12:00:00.000Z", "2026-11-05T12:00:00.000Z", "2026-11-05T12:01:00.000Z"
 	_, offset := time.Now().Zone() // days, hours and minutes are local by the current offset
 	local := noon.Add(time.Duration(offset) * time.Second)
-	today, hour := local.Format(time.DateOnly), local.Format("2006-01-02T15:00")
+	today := local.Format(time.DateOnly)
 	minute, next := local.Format("2006-01-02T15:04"), local.Add(time.Minute).Format("2006-01-02T15:04")
 	type row = map[string]any
 	tests := []struct {
@@ -310,13 +310,13 @@ func TestQuery(t *testing.T) {
 			},
 		},
 		{
-			name:   "hours since a time",
+			name:   "hours since a time in a zone",
 			view:   "hours",
-			filter: stats.Filter{Since: noon},
+			filter: stats.Filter{Since: noon, Zone: time.FixedZone("", 3*3600)},
 			want: []row{
-				{"hour": hour, "code": int64(0), "calls": int64(1)},
-				{"hour": hour, "code": int64(1), "calls": int64(2)},
-				{"hour": hour, "code": int64(2), "calls": int64(1)},
+				{"hour": "2026-11-05T15:00", "code": int64(0), "calls": int64(1)},
+				{"hour": "2026-11-05T15:00", "code": int64(1), "calls": int64(2)},
+				{"hour": "2026-11-05T15:00", "code": int64(2), "calls": int64(1)},
 			},
 		},
 		{
