@@ -314,7 +314,7 @@ function showTip(e, day, counts) {
   tip.replaceChildren(
     h('div', {class: 't'}, dayLabel(day, {weekday: 'short', month: 'short', day: 'numeric'})),
     h('div', {class: 'l'}, 'calls', h('b', {}, fmt(Object.values(counts).reduce((a, b) => a + b, 0)))),
-    Object.entries(counts).map(([c, n]) => h('div', {class: 'l'}, dot(c), outName(c), h('b', {}, fmt(n)))));
+    ...Object.entries(counts).map(([c, n]) => h('div', {class: 'l'}, dot(c), outName(c), h('b', {}, fmt(n)))));
   tip.style.display = 'block';
   tip.style.left = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8) + 'px';
   tip.style.top = (e.clientY + 14) + 'px';
