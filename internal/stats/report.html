@@ -21,7 +21,7 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   a { color: inherit; text-decoration: none; }
-  a:focus-visible, button:focus-visible, .seg button:focus-visible, .icon:focus-visible, .btn:focus-visible {
+  a:focus-visible, button:focus-visible, .seg button:focus-visible, .icon:focus-visible, .btn:focus-visible, .sort:focus-visible, .fold:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 
   .top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px; padding: 10px 24px;
@@ -71,6 +71,13 @@
   .rows .row.head { color: var(--faint); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; border-top: 0;
     min-height: 0; padding-top: 0; padding-bottom: 6px; }
   .rows .row.on { background: var(--surface-2); box-shadow: inset 2px 0 var(--accent); }
+  .rows .row.head .sort { all: unset; cursor: pointer; white-space: nowrap; }
+  .rows .row.head .sort.num { text-align: right; }
+  .rows .row.head .sort:hover { color: var(--text); }
+  .fold { all: unset; cursor: pointer; width: 14px; flex: none; text-align: center; color: var(--muted); }
+  .row.kid { background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
+  .rows .row.kid > :first-child { padding-left: 40px; }
+  .rows .row.kid .name b { font-weight: 500; }
   a.row:hover { background: var(--surface-2); }
   .rows > .row:last-child { border-radius: 0 0 10px 10px; }
   .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -241,11 +248,37 @@ function card(title, body, opts = {}) {
       opts.more && h('a', {class: 'more', href: opts.more[1]}, opts.more[0] + ' →')),
     body);
 }
-function table(cols, head, items, empty = 'Nothing in this period') {
+// The sort of each table by its head, the open items by key and the tables shown past their limit, for the open tab.
+const sorts = new Map(), opened = new Set(), unfolded = new Set();
+const cmp = (a, b) => typeof a === 'number' && typeof b === 'number' ? a - b : String(a ?? '').localeCompare(String(b ?? ''));
+// table lists items as rows. Items with sort, a value for each sortable column, sort by a click on its head, calls
+// descending first. An item's kids are rows under it while it is open. Rows past limit wait for "show all".
+function table(cols, head, items, empty = 'Nothing in this period', limit = Infinity) {
   if (!items.length) return h('div', {class: 'empty'}, empty);
-  return h('div', {class: 'rows', style: `--cols:${cols}`},
-    h('div', {class: 'row head'}, head.map((x, i) => h('span', {class: /\b(num|rate)\b/.test(items[0].cells[i]?.className) ? 'num' : ''}, x))),
-    items.map(i => h(i.href ? 'a' : 'div', {class: 'row' + (i.on ? ' on' : ''), href: i.href}, i.cells)));
+  const id = head.join('|'), box = h('div', {class: 'rows', style: `--cols:${cols}`});
+  const num = i => /\b(num|rate)\b/.test(items[0].cells[i]?.className) ? ' num' : '';
+  const sortable = i => items[0].sort?.[i] !== undefined, folds = items.some(i => i.kids);
+  const draw = () => {
+    const s = sorts.get(id) || {col: head.indexOf('calls'), desc: true};
+    const order = list => sortable(s.col) ? [...list].sort((a, b) => cmp(a.sort[s.col], b.sort[s.col]) * (s.desc ? -1 : 1)) : list;
+    const row = (i, kid) => {
+      const open = opened.has(i.key), flip = e => { e.preventDefault(); open ? opened.delete(i.key) : opened.add(i.key); draw(); };
+      const fold = folds && !kid && (i.kids ? h('button', {class: 'fold', 'aria-expanded': String(open), 'aria-label': open ? 'collapse' : 'expand', onclick: flip}, open ? '▾' : '▸')
+        : h('span', {class: 'fold'}));
+      return h(i.href ? 'a' : 'div', {class: 'row' + (i.on ? ' on' : '') + (kid ? ' kid' : ''), href: i.href, onclick: !i.href && i.kids ? flip : null},
+        fold ? [h('span', {class: 'line trunc'}, fold, i.cells[0]), i.cells.slice(1)] : i.cells);
+    };
+    const shown = order(items).slice(0, unfolded.has(id) ? Infinity : limit);
+    box.replaceChildren(
+      h('div', {class: 'row head'}, head.map((x, i) => !sortable(i) ? h('span', {class: num(i)}, x)
+        : h('button', {class: 'sort' + num(i), onclick: () => { sorts.set(id, {col: i, desc: s.col !== i || !s.desc}); draw(); }},
+          x, s.col === i && (s.desc ? ' ▼' : ' ▲')))),
+      ...shown.flatMap(i => [row(i), ...(i.kids && opened.has(i.key) ? order(i.kids).map(k => row(k, true)) : [])]),
+      ...(shown.length < items.length ? [h('div', {class: 'foot'},
+        h('button', {class: 'btn', onclick: () => { unfolded.add(id); draw(); }}, `show all ${fmt(items.length)}`))] : []));
+  };
+  draw();
+  return box;
 }
 function kpis(items) {
   return h('div', {class: 'kpis'}, items.map(k => h(k.href ? 'a' : 'div', {class: 'kpi', href: k.href},
@@ -334,24 +367,49 @@ function byKind(usage) {
   return [...m.values()].sort((a, b) => b.calls - a.calls);
 }
 const commandList = (usage, scope) => table('minmax(0,1.3fr) minmax(70px,1fr) 56px 104px', ['command', 'outcome mix', 'calls', 'failed'],
-  byKind(usage).map(k => ({href: k.kind ? go.command(k.kind, scope) : null, cells: [
+  byKind(usage).map(k => ({href: k.kind ? go.command(k.kind, scope) : null, sort: [k.kind, undefined, k.calls, k.failed / k.calls], cells: [
     h('span', {class: 'mono trunc'}, k.kind || '(no command)'), mix(k.codes), h('span', {class: 'num'}, fmt(k.calls)), rate(k.failed, k.calls)]})));
 // groupText shows the masked parts of an error group dimmed, so the fixed words read first.
 const groupText = g => g ? g.split(/(<\w+>)/).map((s, i) => i % 2 ? h('span', {class: 'ph'}, s) : s) : '(no message)';
 const errorCell = e => h('span', {class: 'line trunc'}, dot(e.code), h('span', {class: 'mono trunc', title: e.group}, groupText(e.group)));
 const errorList = (errors, scope, limit) => table('minmax(0,1fr) 56px 76px', ['error', 'calls', 'last'],
-  errors.slice(0, limit).map(e => ({href: e.group ? go.error(e.group, scope) : null, cells: [
+  errors.slice(0, limit).map(e => ({href: e.group ? go.error(e.group, scope) : null, sort: [e.group, e.calls, e.last], cells: [
     errorCell(e), h('span', {class: 'num'}, fmt(e.calls)), h('span', {class: 'num dim'}, when(e.last))]})), 'No errors in this period');
-const projectList = projects => table('minmax(0,1fr) 64px 104px 76px', ['project', 'calls', 'failed', 'last'],
-  projects.map(p => ({href: go.project(p.project), cells: [
-    h('span', {class: 'line trunc'}, name(p.project), p.worktrees > 1 && h('span', {class: 'tag'}, `${p.worktrees} trees`)),
-    h('span', {class: 'num'}, fmt(p.calls)), rate(p.failed, p.calls), h('span', {class: 'num dim'}, when(p.last))]})));
+// projectList nests under each project its working trees from trees, the worktrees view, and gathers the directories
+// outside git into one item.
+function projectList(projects, trees = []) {
+  const item = (key, href, label, p, kids) => ({key, href, sort: [base(key), p.calls, p.failed / p.calls, p.last], kids,
+    cells: [label, h('span', {class: 'num'}, fmt(p.calls)), rate(p.failed, p.calls), h('span', {class: 'num dim'}, when(p.last))]});
+  const sum = (rows, by) => {
+    const m = new Map();
+    for (const r of rows) {
+      const s = m.get(by(r)) || {key: by(r), calls: 0, failed: 0, last: ''};
+      m.set(s.key, {...s, calls: s.calls + r.calls, failed: s.failed + r.failed, last: r.last > s.last ? r.last : s.last});
+    }
+    return [...m.values()];
+  };
+  const items = projects.filter(p => p.worktrees).map(p => {
+    const ws = sum(trees.filter(t => t.project === p.project), t => t.worktree).map(w => {
+      const main = w.key === p.project;
+      return item(w.key, w.key ? go.project(p.project, main ? null : w.key) : null, w.key
+        ? h('span', {class: 'line trunc'}, name(w.key), main && h('span', {class: 'tag'}, 'main'))
+        : h('span', {class: 'faint'}, 'outside git'), w);
+    });
+    return item(p.project, go.project(p.project),
+      h('span', {class: 'line trunc'}, name(p.project), p.worktrees > 1 && h('span', {class: 'tag'}, `${p.worktrees} trees`)), p,
+      ws.length > 1 ? ws : null);
+  });
+  const out = projects.filter(p => !p.worktrees);
+  if (out.length) items.push(item('outside git', null, h('span', {class: 'name trunc'}, h('b', {}, 'outside git'), h('span', {class: 'dim'}, `${out.length} dirs`)),
+    sum(out, () => 'outside git')[0], out.map(p => item(p.project, go.project(p.project), name(p.project), p))));
+  return table('minmax(0,1fr) 64px 104px 76px', ['project', 'calls', 'failed', 'last'], items, undefined, 20);
+}
 // where is a file's directory in its working tree, after the worktree's name when it is not the main tree.
 const where = (file, tree, project) => [tree !== project && base(tree), rel(dir(file), tree)].filter(Boolean).join(' · ');
 const fileList = (files, inProject) => table('minmax(0,1fr) 56px 104px 76px', ['file', 'calls', 'failed', 'last'],
   files.map(f => {
     const tree = f.worktree || f.project;
-    return {href: go.file(f.file), cells: [
+    return {href: go.file(f.file), sort: [base(f.file), f.calls, f.failed / f.calls, f.last], cells: [
       name(f.file, inProject ? where(f.file, tree, f.project) : [base(f.project), where(f.file, tree, f.project)].filter(Boolean).join(' · ')),
       h('span', {class: 'num'}, fmt(f.calls)), rate(f.failed, f.calls), h('span', {class: 'num dim'}, when(f.last))]};
   }));
@@ -371,7 +429,7 @@ function treeList(trees, project) {
       const main = w.worktree === project;
       const cfg = !w.config ? h('span', {class: 'faint'}, 'none')
         : h('span', {class: 'tag', title: w.config}, main || rel(w.config, w.worktree) !== w.config ? 'own' : 'from main tree');
-      return {href: w.worktree ? go.project(project, main ? null : w.worktree) : null, cells: [
+      return {href: w.worktree ? go.project(project, main ? null : w.worktree) : null, sort: [base(w.worktree), w.branch, undefined, w.calls, w.failed / w.calls], cells: [
         w.worktree ? h('span', {class: 'line trunc'}, name(w.worktree, w.worktree), h('span', {class: 'tag'}, main ? 'main' : 'worktree'))
           : h('span', {class: 'faint'}, 'outside git'),
         h('span', {class: 'mono trunc dim'}, w.branch || '—'), h('span', {}, cfg), h('span', {class: 'num'}, fmt(w.calls)), rate(w.failed, w.calls)]};
@@ -390,13 +448,13 @@ const projectCrumbs = (p, wt) => [[base(p), go.project(p)], wt && wt !== p && [b
 
 const pages = {
   async home() {
-    const [[s], days, projects, errors, usage, files] = await Promise.all(
-      [api('summary'), api('days'), api('projects'), api('errors'), api('usage'), api('files')]);
+    const [[s], days, projects, trees, errors, usage, files] = await Promise.all(
+      [api('summary'), api('days'), api('projects'), api('worktrees'), api('errors'), api('usage'), api('files')]);
     return {crumbs: [], body: [
       summaryKpis(s, {}, [{label: 'projects', value: fmt(s.projects), sub: `${fmt(s.worktrees)} working trees`}]),
       card('Calls per day', dayChart(days), {sub: legend()}),
       cols([
-        card('Projects', projectList(projects)),
+        card('Projects', projectList(projects, trees)),
         card('Commands', commandList(usage, {})),
       ], [
         card('Top errors', errorList(errors, {}, 8), {sub: `${Math.min(8, errors.length)} of ${errors.length}`, more: errors.length > 8 && ['all errors', go.errors()]}),
@@ -544,7 +602,7 @@ const pages = {
     return {crumbs: [p && [base(p), go.project(p)], ['errors']], body: [
       head('Errors', p),
       card('Error groups', table('minmax(0,1fr) 56px 64px 56px 76px 76px', ['error', 'calls', 'projects', 'files', 'first', 'last'],
-        errors.map(e => ({href: e.group ? go.error(e.group, {project: p}) : null, cells: [
+        errors.map(e => ({href: e.group ? go.error(e.group, {project: p}) : null, sort: [e.group, e.calls, e.projects, e.files, e.first, e.last], cells: [
           errorCell(e), h('span', {class: 'num'}, fmt(e.calls)), h('span', {class: 'num dim'}, fmt(e.projects)),
           h('span', {class: 'num dim'}, fmt(e.files)), h('span', {class: 'num dim'}, when(e.first)), h('span', {class: 'num dim'}, when(e.last))]})),
         'No errors in this period'), {sub: 'one message with its paths, quoted text and numbers masked'}),
