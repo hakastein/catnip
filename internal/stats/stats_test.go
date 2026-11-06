@@ -101,6 +101,14 @@ func TestRecord(t *testing.T) {
 			want:  recorded{Command: "grep", Argv: `["grep","--all","x"]`, Cwd: "~/wt", Project: "~/main", Worktree: "~/wt", Branch: "feature/x"},
 		},
 		{
+			name:  "file outside git: repository from the working directory",
+			files: worktree("out/a.txt", ""),
+			cwd:   "wt",
+			call:  stats.Call{Time: noon, Argv: []string{"show", "../out/a.txt"}, File: "../out/a.txt"},
+			want: recorded{Command: "show", Argv: `["show","../out/a.txt"]`, Cwd: "~/wt", File: "~/out/a.txt", Project: "~/main",
+				Worktree: "~/wt", Branch: "feature/x"},
+		},
+		{
 			name: "outside git the project is the working directory",
 			call: stats.Call{Time: noon, Argv: []string{}},
 			want: recorded{Argv: `[]`, Cwd: "~", Project: "~"},
@@ -261,12 +269,13 @@ func TestQuery(t *testing.T) {
 			},
 		},
 		{
-			name:   "worktrees of a project, latest first",
-			view:   "worktrees",
-			filter: stats.Filter{Project: main},
+			name: "worktrees of every project, by calls",
+			view: "worktrees",
 			want: []row{
-				{"worktree": wt, "branch": "feature/x", "config": config, "calls": int64(2), "failed": int64(1), "last": day1},
-				{"worktree": main, "branch": "main", "config": config, "calls": int64(1), "failed": int64(0), "last": day0},
+				{"project": main, "worktree": wt, "branch": "feature/x", "config": config, "calls": int64(2), "failed": int64(1), "last": day1},
+				{"project": dir, "worktree": "", "branch": "", "config": "", "calls": int64(1), "failed": int64(1), "last": day1},
+				{"project": main, "worktree": main, "branch": "main", "config": config, "calls": int64(1), "failed": int64(0), "last": day0},
+				{"project": other, "worktree": other, "branch": "main", "config": "", "calls": int64(1), "failed": int64(1), "last": later},
 			},
 		},
 		{

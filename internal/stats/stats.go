@@ -109,6 +109,9 @@ func Record(path string, c Call, code int, limit int64) error {
 		return err
 	}
 	repo := config.FindRepo(dir)
+	if repo.Root == "" { // a file outside git belongs to the repository the call was made in
+		repo = config.FindRepo(cwd)
+	}
 	project := repo.Main
 	if project == "" {
 		project = cwd
@@ -189,8 +192,8 @@ var views = map[string]string{
 	"projects": `SELECT project, count(*) AS calls, sum(exit_code <> 0) AS failed, count(DISTINCT nullif(worktree, ''))
 		AS worktrees, sum(command = 'show') AS show, sum(command = 'edit') AS edit, sum(command = 'write') AS write,
 		max(time) AS last FROM c GROUP BY project ORDER BY calls DESC, project`,
-	"worktrees": `SELECT worktree, branch, config, count(*) AS calls, sum(exit_code <> 0) AS failed, max(time) AS last
-		FROM c GROUP BY worktree, branch, config ORDER BY last DESC, worktree`,
+	"worktrees": `SELECT project, worktree, branch, config, count(*) AS calls, sum(exit_code <> 0) AS failed,
+		max(time) AS last FROM c GROUP BY project, worktree, branch, config ORDER BY calls DESC, worktree`,
 	"usage": `SELECT kind, exit_code AS code, count(*) AS calls FROM c GROUP BY kind, code ORDER BY kind, code`,
 	"errors": `SELECT error_group AS "group", max(exit_code) AS code, count(*) AS calls, count(DISTINCT project) AS projects,
 		count(DISTINCT nullif(file, '')) AS files, min(time) AS first, max(time) AS last FROM c
