@@ -148,7 +148,7 @@
 // Every screen is a hash route and every link a plain anchor, so back and forward work; data comes from /api/<view>.
 const outcomes = {0: 'ok', 1: 'not applied', 2: 'bad usage', 3: 'check failed'};
 const outName = c => outcomes[c] ?? `exit ${c}`;
-const periods = [['1', '24h'], ['7', '7 days'], ['30', '30 days'], ['90', '90 days'], ['0', 'all time']];
+const periods = [['h1', '1h'], ['1', '24h'], ['7', '7 days'], ['30', '30 days'], ['90', '90 days'], ['0', 'all time']];
 const pageSize = 100; // stats.PageSize
 let period = localStorage.getItem('catnip.period') || '30';
 let seq = 0, lastHash = null;
@@ -188,7 +188,7 @@ function svg(tag, attrs, ...kids) {
 }
 
 async function api(view, filter) {
-  const q = new URLSearchParams({days: period});
+  const q = new URLSearchParams({days: period === 'h1' ? 1 / 24 : period});
   for (const [k, v] of Object.entries(filter || {})) if (v != null && v !== '') q.set(k, v);
   const r = await fetch(`api/${view}?${q}`);
   if (!r.ok) throw new Error(await r.text());
@@ -225,7 +225,7 @@ function rel(path, root) {
 }
 const shq = a => /^[\w@%+=:,./-][\w@%+=:,./#-]*$/.test(a) ? a : "'" + a.replaceAll("'", "'\\''") + "'";
 const firstLine = s => (s || '').split('\n')[0];
-const periodName = () => ({1: 'the last 24h', 0: 'all time'})[period] ?? periods.find(p => p[0] === period)[1];
+const periodName = () => ({h1: 'the last hour', 1: 'the last 24h', 0: 'all time'})[period] ?? periods.find(p => p[0] === period)[1];
 
 // ---- pieces
 
@@ -294,61 +294,76 @@ const legend = () => h('div', {class: 'legend'}, [0, 1, 2, 3].map(c => h('span',
 // cols lays cards out in two independent columns, so a short card does not leave a hole under it.
 const cols = (left, right) => h('div', {class: 'grid2'}, h('div', {class: 'stack'}, left), h('div', {class: 'stack'}, right));
 
-// ---- chart: calls per local day, stacked by outcome
+// ---- chart: calls per local minute, hour or day, stacked by outcome
 
-function dayChart(rows) {
+// unit is the chart's step: a minute over the last hour, an hour over 24h, a day over longer periods. Its view is
+// minutes, hours or days.
+const unit = () => ({h1: 'minute', 1: 'hour'})[period] || 'day';
+function callChart(rows) {
   const box = h('div', {class: 'chart'});
-  box.draw = () => drawDays(box, rows); // drawn once in the page, when its width is known
+  box.draw = () => drawSlots(box, rows); // drawn once in the page, when its width is known
   return box;
 }
-const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const pad = n => String(n).padStart(2, '0');
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+// slot is the minute, hour or day of d as its view keys it.
+const slot = (d, u) => u === 'day' ? ymd(d) : `${ymd(d)}T${pad(d.getHours())}:${u === 'hour' ? '00' : pad(d.getMinutes())}`;
 const addDay = (s, n) => { const [y, m, d] = s.split('-').map(Number); return ymd(new Date(y, m - 1, d + n)); };
 const dayLabel = (d, o) => new Date(d + 'T12:00').toLocaleDateString(undefined, o || {month: 'short', day: 'numeric'});
-function drawDays(box, rows) {
-  const byDay = new Map();
+const slotLabel = (s, long) => {
+  const day = long ? dayLabel(s.slice(0, 10), {weekday: 'short', month: 'short', day: 'numeric'}) : '';
+  return s.length > 10 ? [day, s.slice(11)].filter(Boolean).join(' ') : day || dayLabel(s);
+};
+function drawSlots(box, rows) {
+  const u = unit(), bySlot = new Map();
   for (const r of rows) {
-    if (!byDay.has(r.day)) byDay.set(r.day, {});
-    byDay.get(r.day)[r.code] = r.calls;
+    if (!bySlot.has(r[u])) bySlot.set(r[u], {});
+    bySlot.get(r[u])[r.code] = r.calls;
   }
-  const seen = [...byDay.keys()].sort();
+  const seen = [...bySlot.keys()].sort();
   if (!seen.length) return box.replaceChildren(h('div', {class: 'empty'}, 'No calls in this period'));
-  const today = ymd(new Date());
-  let start = period === '0' ? seen[0] : addDay(today, 1 - Number(period));
-  if (seen[0] < start) start = seen[0];
-  const days = [];
-  for (let d = today; d >= start && days.length < 1000; d = addDay(d, -1)) days.unshift(d);
+  const slots = [];
+  if (u === 'day') {
+    const today = ymd(new Date());
+    let start = period === '0' ? seen[0] : addDay(today, 1 - Number(period));
+    if (seen[0] < start) start = seen[0];
+    for (let d = today; d >= start && slots.length < 1000; d = addDay(d, -1)) slots.unshift(d);
+  } else { // the period starts inside its first minute or hour, so that one is drawn too
+    const [n, ms] = u === 'hour' ? [24, 3600e3] : [60, 60e3];
+    for (let i = n; i >= 0; i--) slots.push(slot(new Date(Date.now() - i * ms), u));
+  }
   const codes = [...new Set(rows.map(r => r.code))].sort((a, b) => a - b);
   const css = getComputedStyle(document.documentElement);
   const color = c => css.getPropertyValue(['--o-ok', '--o-na', '--o-bu', '--o-cf'][c] || '--o-bu');
   const W = Math.max(300, box.clientWidth - 32), H = 190, L = 34, B = 20, T = 6;
-  const total = d => Object.values(byDay.get(d) || {}).reduce((a, b) => a + b, 0);
-  const peak = Math.max(1, ...days.map(total));
+  const total = d => Object.values(bySlot.get(d) || {}).reduce((a, b) => a + b, 0);
+  const peak = Math.max(1, ...slots.map(total));
   const step = Math.pow(10, Math.floor(Math.log10(peak))), top = [1, 2, 5, 10].map(m => m * step).find(t => t >= peak);
-  const y = v => T + (H - T - B) * (1 - v / top), bw = (W - L) / days.length;
-  const g = svg('svg', {viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': 'calls per day'});
+  const y = v => T + (H - T - B) * (1 - v / top), bw = (W - L) / slots.length;
+  const g = svg('svg', {viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': `calls per ${u}`});
   for (const v of top % 2 ? [0, top] : [0, top / 2, top]) {
     g.append(svg('line', {class: 'grid', x1: L, x2: W, y1: y(v), y2: y(v)}));
     g.append(svg('text', {class: 'axis', x: L - 6, y: y(v) + 4, 'text-anchor': 'end'}, String(Math.round(v))));
   }
-  const every = Math.ceil(days.length / Math.max(1, Math.floor((W - L) / 64)));
-  days.forEach((d, i) => {
+  const every = Math.ceil(slots.length / Math.max(1, Math.floor((W - L) / 64)));
+  slots.forEach((d, i) => {
     const x = L + i * bw, w = Math.max(1, Math.min(bw * .72, 28));
     let acc = 0;
     for (const c of codes) {
-      const n = (byDay.get(d) || {})[c] || 0;
+      const n = (bySlot.get(d) || {})[c] || 0;
       if (!n) continue;
       g.append(svg('rect', {x: x + (bw - w) / 2, y: y(acc + n), width: w, height: Math.max(1, y(acc) - y(acc + n)), rx: 1.5, fill: color(c)}));
       acc += n;
     }
-    if ((days.length - 1 - i) % every === 0) g.append(svg('text', {class: 'axis', x: x + bw / 2, y: H - 4, 'text-anchor': 'middle'}, dayLabel(d)));
+    if ((slots.length - 1 - i) % every === 0) g.append(svg('text', {class: 'axis', x: x + bw / 2, y: H - 4, 'text-anchor': 'middle'}, slotLabel(d)));
     g.append(svg('rect', {class: 'hit', x, y: T, width: bw, height: H - T - B,
-      onmousemove: e => showTip(e, d, byDay.get(d) || {}), onmouseleave: () => tip.style.display = 'none'}));
+      onmousemove: e => showTip(e, d, bySlot.get(d) || {}), onmouseleave: () => tip.style.display = 'none'}));
   });
   box.replaceChildren(g);
 }
-function showTip(e, day, counts) {
+function showTip(e, at, counts) {
   tip.replaceChildren(
-    h('div', {class: 't'}, dayLabel(day, {weekday: 'short', month: 'short', day: 'numeric'})),
+    h('div', {class: 't'}, slotLabel(at, true)),
     h('div', {class: 'l'}, 'calls', h('b', {}, fmt(Object.values(counts).reduce((a, b) => a + b, 0)))),
     ...Object.entries(counts).map(([c, n]) => h('div', {class: 'l'}, dot(c), outName(c), h('b', {}, fmt(n)))));
   tip.style.display = 'block';
@@ -451,11 +466,11 @@ const projectCrumbs = (p, wt) => [[base(p), go.project(p)], wt && wt !== p && [b
 
 const pages = {
   async home() {
-    const [[s], days, projects, trees, errors, usage, files] = await Promise.all(
-      [api('summary'), api('days'), api('projects'), api('worktrees'), api('errors'), api('usage'), api('files')]);
+    const [[s], slots, projects, trees, errors, usage, files] = await Promise.all(
+      [api('summary'), api(unit() + 's'), api('projects'), api('worktrees'), api('errors'), api('usage'), api('files')]);
     return {crumbs: [], body: [
       summaryKpis(s, {}, [{label: 'projects', value: fmt(s.projects), sub: `${fmt(s.worktrees)} working trees`}]),
-      card('Calls per day', dayChart(days), {sub: legend()}),
+      card(`Calls per ${unit()}`, callChart(slots), {sub: legend()}),
       cols([
         card('Projects', projectList(projects, trees)),
         card('Commands', commandList(usage, {})),
@@ -468,13 +483,13 @@ const pages = {
 
   async project(r) {
     const p = r.arg, wt = r.q.worktree, scope = {project: p, worktree: wt};
-    const [[s], days, trees, usage, errors, files, calls] = await Promise.all([api('summary', scope), api('days', scope),
+    const [[s], slots, trees, usage, errors, files, calls] = await Promise.all([api('summary', scope), api(unit() + 's', scope),
       api('worktrees', {project: p}), api('usage', scope), api('errors', scope), api('files', scope), api('calls', scope)]);
     const tree = trees.filter(t => t.worktree === (wt || p)).reduce((a, t) => !a || t.last > a.last ? t : a, null); // its latest branch
     return {crumbs: projectCrumbs(p, wt), body: [
       head(wt ? base(wt) : base(p), wt || p, tree?.branch && h('span', {class: 'tag mono'}, tree.branch)),
       summaryKpis(s, scope, wt ? [] : [{label: 'working trees', value: fmt(s.worktrees), sub: 'main tree and worktrees'}]),
-      card('Calls per day', dayChart(days), {sub: legend()}),
+      card(`Calls per ${unit()}`, callChart(slots), {sub: legend()}),
       !wt && card('Working trees', treeList(trees, p), {sub: 'every checkout of the repository'}),
       cols([
         card('Commands', commandList(usage, scope)),
@@ -488,7 +503,7 @@ const pages = {
 
   async error(r) {
     const g = r.arg, p = r.q.project, scope = {project: p, group: g};
-    const [[s], days, projects, usage, files, calls] = await Promise.all([api('summary', scope), api('days', scope),
+    const [[s], slots, projects, usage, files, calls] = await Promise.all([api('summary', scope), api(unit() + 's', scope),
       api('projects', scope), api('usage', scope), api('files', scope), api('calls', scope)]);
     const last = calls[0];
     return {crumbs: [p && [base(p), go.project(p)], ['errors', go.errors({project: p})], ['error']], body: [
@@ -502,7 +517,7 @@ const pages = {
         {label: 'first seen', value: ago(s.first), sub: local(s.first)},
         {label: 'last seen', value: ago(s.last), sub: local(s.last)},
       ]),
-      card('Occurrences per day', dayChart(days)),
+      card(`Occurrences per ${unit()}`, callChart(slots)),
       cols([
         card('Commands', commandList(usage, {project: p})),
         !p && card('Projects', projectList(projects)),
@@ -515,7 +530,7 @@ const pages = {
 
   async command(r) {
     const k = r.arg, p = r.q.project, scope = {project: p, kind: k};
-    const [[s], days, usage, errors, files, calls] = await Promise.all([api('summary', scope), api('days', scope),
+    const [[s], slots, usage, errors, files, calls] = await Promise.all([api('summary', scope), api(unit() + 's', scope),
       api('usage', scope), api('errors', scope), api('files', scope), api('calls', scope)]);
     const codes = byKind(usage)[0]?.codes || {};
     return {crumbs: [p && [base(p), go.project(p)], [k]], body: [
@@ -527,7 +542,7 @@ const pages = {
           ({label: outName(c), value: fmt(n), sub: `${pct(n, s.calls)} of calls`, href: go.calls({...scope, code: c})})),
         {label: 'projects', value: fmt(s.projects), sub: `${fmt(s.files)} files`},
       ]),
-      card('Calls per day', dayChart(days), {sub: legend()}),
+      card(`Calls per ${unit()}`, callChart(slots), {sub: legend()}),
       h('div', {class: 'grid2'},
         card('Errors', errorList(errors, {project: p}, 10), {sub: 'of this command'}),
         card('Files', fileList(files.slice(0, 10), !!p))),

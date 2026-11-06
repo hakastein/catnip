@@ -182,13 +182,18 @@ type Filter struct {
 // PageSize is how many calls the calls view lists at once, and how many files the files view lists.
 const PageSize = 100
 
-// views are the report's queries over c, the filtered calls with their kind. Days are local by the current UTC offset.
+// views are the report's queries over c, the filtered calls with their kind. Days, hours and minutes are local by the
+// current UTC offset.
 var views = map[string]string{
 	"summary": `SELECT count(*) AS calls, coalesce(sum(exit_code <> 0), 0) AS failed, count(DISTINCT project) AS projects,
 		count(DISTINCT nullif(worktree, '')) AS worktrees, count(DISTINCT nullif(file, '')) AS files,
 		count(DISTINCT CASE WHEN exit_code <> 0 THEN error_group END) AS groups, min(time) AS first, max(time) AS last
 		FROM c`,
 	"days": `SELECT day, exit_code AS code, count(*) AS calls FROM c GROUP BY day, code ORDER BY day, code`,
+	"hours": `SELECT strftime('%Y-%m-%dT%H:00', time, ?9) AS hour, exit_code AS code, count(*) AS calls FROM c
+		GROUP BY hour, code ORDER BY hour, code`,
+	"minutes": `SELECT strftime('%Y-%m-%dT%H:%M', time, ?9) AS minute, exit_code AS code, count(*) AS calls FROM c
+		GROUP BY minute, code ORDER BY minute, code`,
 	"projects": `SELECT project, count(*) AS calls, sum(exit_code <> 0) AS failed, count(DISTINCT nullif(worktree, ''))
 		AS worktrees, sum(command = 'show') AS show, sum(command = 'edit') AS edit, sum(command = 'write') AS write,
 		max(time) AS last FROM c GROUP BY project ORDER BY calls DESC, project`,
@@ -204,8 +209,8 @@ var views = map[string]string{
 		branch, config FROM c ORDER BY id DESC LIMIT ` + strconv.Itoa(PageSize),
 }
 
-// Query reads a view from the database at path: summary, days, projects, worktrees, usage, errors, files or calls.
-// Each row maps a column to its value.
+// Query reads a view from the database at path: summary, days, hours, minutes, projects, worktrees, usage, errors,
+// files or calls. Each row maps a column to its value.
 func Query(path, view string, f Filter) ([]map[string]any, error) {
 	q, ok := views[view]
 	if !ok {
@@ -261,8 +266,9 @@ func Query(path, view string, f Filter) ([]map[string]any, error) {
 var page string
 
 // Handler serves the report page and, at /api/<view>, each view as JSON over the database at path. The query
-// parameters days, project, worktree, file, group, kind, code, before and id fill the Filter. Only requests to 127.0.0.1
-// or localhost are served, so a web page cannot reach the report through a name that resolves to this machine.
+// parameters days, a number of days that may be fractional, project, worktree, file, group, kind, code, before and id
+// fill the Filter. Only requests to 127.0.0.1 or localhost are served, so a web page cannot reach the report through
+// a name that resolves to this machine.
 func Handler(path string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -273,8 +279,8 @@ func Handler(path string) http.Handler {
 		q := r.URL.Query()
 		f := Filter{Project: q.Get("project"), Worktree: q.Get("worktree"), File: q.Get("file"), Group: q.Get("group"),
 			Kind: q.Get("kind"), Code: q.Get("code")}
-		if days, err := strconv.Atoi(q.Get("days")); err == nil && days > 0 {
-			f.Since = time.Now().AddDate(0, 0, -days)
+		if days, err := strconv.ParseFloat(q.Get("days"), 64); err == nil && days > 0 {
+			f.Since = time.Now().Add(-time.Duration(days * float64(24*time.Hour)))
 		}
 		f.Before, _ = strconv.ParseInt(q.Get("before"), 10, 64)
 		f.ID, _ = strconv.ParseInt(q.Get("id"), 10, 64)

@@ -228,8 +228,10 @@ func TestQuery(t *testing.T) {
 	main, wt, other := filepath.Join(dir, "main"), filepath.Join(dir, "wt"), filepath.Join(dir, "other")
 	config := filepath.Join(main, ".catnip.json")
 	day0, day1, later := "2026-11-04T12:00:00.000Z", "2026-11-05T12:00:00.000Z", "2026-11-05T12:01:00.000Z"
-	_, offset := time.Now().Zone() // days are local by the current offset
-	today := noon.Add(time.Duration(offset) * time.Second).Format(time.DateOnly)
+	_, offset := time.Now().Zone() // days, hours and minutes are local by the current offset
+	local := noon.Add(time.Duration(offset) * time.Second)
+	today, hour := local.Format(time.DateOnly), local.Format("2006-01-02T15:00")
+	minute, next := local.Format("2006-01-02T15:04"), local.Add(time.Minute).Format("2006-01-02T15:04")
 	type row = map[string]any
 	tests := []struct {
 		name   string
@@ -305,6 +307,27 @@ func TestQuery(t *testing.T) {
 				{"day": today, "code": int64(0), "calls": int64(1)},
 				{"day": today, "code": int64(1), "calls": int64(2)},
 				{"day": today, "code": int64(2), "calls": int64(1)},
+			},
+		},
+		{
+			name:   "hours since a time",
+			view:   "hours",
+			filter: stats.Filter{Since: noon},
+			want: []row{
+				{"hour": hour, "code": int64(0), "calls": int64(1)},
+				{"hour": hour, "code": int64(1), "calls": int64(2)},
+				{"hour": hour, "code": int64(2), "calls": int64(1)},
+			},
+		},
+		{
+			name:   "minutes since a time",
+			view:   "minutes",
+			filter: stats.Filter{Since: noon},
+			want: []row{
+				{"minute": minute, "code": int64(0), "calls": int64(1)},
+				{"minute": minute, "code": int64(1), "calls": int64(1)},
+				{"minute": minute, "code": int64(2), "calls": int64(1)},
+				{"minute": next, "code": int64(1), "calls": int64(1)},
 			},
 		},
 		{
