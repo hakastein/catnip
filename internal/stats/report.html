@@ -71,9 +71,8 @@
   .rows .row.head { color: var(--faint); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; border-top: 0;
     min-height: 0; padding-top: 0; padding-bottom: 6px; }
   .rows .row.on { background: var(--surface-2); box-shadow: inset 2px 0 var(--accent); }
-  .rows .row.head .sort { all: unset; cursor: pointer; white-space: nowrap; }
-  .rows .row.head .sort.num { text-align: right; }
-  .rows .row.head .sort:hover { color: var(--text); }
+  .sort { all: unset; cursor: pointer; white-space: nowrap; }
+  .sort:hover { color: var(--text); }
   .fold { all: unset; cursor: pointer; width: 14px; flex: none; text-align: center; color: var(--muted); }
   .row.kid { background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
   .rows .row.kid > :first-child { padding-left: 40px; }
@@ -258,24 +257,28 @@ function table(cols, head, items, empty = 'Nothing in this period', limit = Infi
   const id = head.join('|'), box = h('div', {class: 'rows', style: `--cols:${cols}`});
   const num = i => /\b(num|rate)\b/.test(items[0].cells[i]?.className) ? ' num' : '';
   const sortable = i => items[0].sort?.[i] !== undefined, folds = items.some(i => i.kids);
-  const draw = () => {
+  // draw lays the rows out anew and gives the focus back to the control with data-k focus, which the redraw replaced.
+  const draw = focus => {
     const s = sorts.get(id) || {col: head.indexOf('calls'), desc: true};
     const order = list => sortable(s.col) ? [...list].sort((a, b) => cmp(a.sort[s.col], b.sort[s.col]) * (s.desc ? -1 : 1)) : list;
     const row = (i, kid) => {
-      const open = opened.has(i.key), flip = e => { e.preventDefault(); open ? opened.delete(i.key) : opened.add(i.key); draw(); };
-      const fold = folds && !kid && (i.kids ? h('button', {class: 'fold', 'aria-expanded': String(open), 'aria-label': open ? 'collapse' : 'expand', onclick: flip}, open ? '▾' : '▸')
+      const open = opened.has(i.key), flip = e => { e.preventDefault(); open ? opened.delete(i.key) : opened.add(i.key); draw('fold:' + i.key); };
+      const fold = folds && !kid && (i.kids ? h('button', {class: 'fold', 'data-k': 'fold:' + i.key, 'aria-expanded': String(open), 'aria-label': open ? 'collapse' : 'expand', onclick: flip}, open ? '▾' : '▸')
         : h('span', {class: 'fold'}));
-      return h(i.href ? 'a' : 'div', {class: 'row' + (i.on ? ' on' : '') + (kid ? ' kid' : ''), href: i.href, onclick: !i.href && i.kids ? flip : null},
+      return h(i.href ? 'a' : 'div', {class: 'row' + (i.on ? ' on' : '') + (kid ? ' kid' : ''), href: i.href, 'data-k': !kid && i.href ? 'row:' + i.key : null,
+        onclick: !i.href && i.kids ? flip : null},
         fold ? [h('span', {class: 'line trunc'}, fold, i.cells[0]), i.cells.slice(1)] : i.cells);
     };
-    const shown = order(items).slice(0, unfolded.has(id) ? Infinity : limit);
+    const sorted = order(items), shown = sorted.slice(0, unfolded.has(id) ? Infinity : limit);
     box.replaceChildren(
       h('div', {class: 'row head'}, head.map((x, i) => !sortable(i) ? h('span', {class: num(i)}, x)
-        : h('button', {class: 'sort' + num(i), onclick: () => { sorts.set(id, {col: i, desc: s.col !== i || !s.desc}); draw(); }},
+        : h('button', {class: 'sort' + num(i), 'data-k': 'sort:' + i, onclick: () => { sorts.set(id, {col: i, desc: s.col !== i || !s.desc}); draw('sort:' + i); }},
           x, s.col === i && (s.desc ? ' ▼' : ' ▲')))),
       ...shown.flatMap(i => [row(i), ...(i.kids && opened.has(i.key) ? order(i.kids).map(k => row(k, true)) : [])]),
       ...(shown.length < items.length ? [h('div', {class: 'foot'},
-        h('button', {class: 'btn', onclick: () => { unfolded.add(id); draw(); }}, `show all ${fmt(items.length)}`))] : []));
+        h('button', {class: 'btn', onclick: () => { unfolded.add(id); draw((sorted[limit].href ? 'row:' : 'fold:') + sorted[limit].key); }},
+          `show all ${fmt(items.length)}`))] : []));
+    if (focus) [...box.querySelectorAll('[data-k]')].find(e => e.dataset.k === focus)?.focus();
   };
   draw();
   return box;
@@ -467,7 +470,7 @@ const pages = {
     const p = r.arg, wt = r.q.worktree, scope = {project: p, worktree: wt};
     const [[s], days, trees, usage, errors, files, calls] = await Promise.all([api('summary', scope), api('days', scope),
       api('worktrees', {project: p}), api('usage', scope), api('errors', scope), api('files', scope), api('calls', scope)]);
-    const tree = trees.find(t => t.worktree === (wt || p));
+    const tree = trees.filter(t => t.worktree === (wt || p)).reduce((a, t) => !a || t.last > a.last ? t : a, null); // its latest branch
     return {crumbs: projectCrumbs(p, wt), body: [
       head(wt ? base(wt) : base(p), wt || p, tree?.branch && h('span', {class: 'tag mono'}, tree.branch)),
       summaryKpis(s, scope, wt ? [] : [{label: 'working trees', value: fmt(s.worktrees), sub: 'main tree and worktrees'}]),
