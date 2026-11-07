@@ -47,7 +47,7 @@ func ParseArgs(args []string) ([]Op, error) {
 			if i+2 >= len(args) {
 				return nil, fmt.Errorf("%s: want FROM#HASH[-TO#HASH] and NEW", typed(args[i:]))
 			}
-			r, err := parseRange(name, "FROM#HASH[-TO#HASH]", args[i+1])
+			r, err := ParseRange(name, "FROM#HASH[-TO#HASH]", args[i+1])
 			if err != nil {
 				return nil, err
 			}
@@ -60,7 +60,7 @@ func ParseArgs(args []string) ([]Op, error) {
 			if strings.Contains(args[i+1], "-") && lineRange.MatchString(args[i+1]) {
 				return nil, fmt.Errorf("%s: %q is a range, want one LINE#HASH", name, args[i+1])
 			}
-			r, err := parseRange(name, "LINE#HASH", args[i+1])
+			r, err := ParseRange(name, "LINE#HASH", args[i+1])
 			if err != nil {
 				return nil, err
 			}
@@ -97,9 +97,9 @@ func typed(edit []string) string {
 	return s
 }
 
-// parseRange reads FROM#HASH[-TO#HASH], the line addresses catnip show prints, for the edit named name that
+// ParseRange reads FROM#HASH[-TO#HASH], the line addresses catnip show prints, for the argument named name that
 // wants the form want.
-func parseRange(name, want, s string) (LineRange, error) {
+func ParseRange(name, want, s string) (LineRange, error) {
 	m := lineRange.FindStringSubmatch(s)
 	if m == nil {
 		return LineRange{}, fmt.Errorf("%s: %q is not %s as catnip show prints it", name, s, want)

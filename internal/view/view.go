@@ -19,6 +19,7 @@ type Target struct {
 	Path     string
 	From, To int // 0, 0 for the whole file
 	Line     int // the asked position; 0 for a range
+	Column   int // the column of the asked position; 0 without one
 }
 
 var suffix = regexp.MustCompile(`^(.+?):(\d+)(?:-(\d+)|:(\d+))?$`)
@@ -41,7 +42,11 @@ func ParseTarget(s string, context int) (Target, error) {
 		}
 		return Target{Path: m[1], From: a, To: b}, nil
 	}
-	return Target{Path: m[1], From: max(1, a-context), To: a + context, Line: a}, nil
+	c, _ := strconv.Atoi(m[4])
+	if m[4] != "" && c < 1 {
+		return Target{}, fmt.Errorf("%s: columns start at 1", s)
+	}
+	return Target{Path: m[1], From: max(1, a-context), To: a + context, Line: a, Column: c}, nil
 }
 
 // Gutters are what Render prints before each line: its address <n>#<hash>, its number, or nothing.

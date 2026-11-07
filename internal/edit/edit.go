@@ -221,7 +221,7 @@ func resolveLines(text string, op Op) ([]change, string) {
 		n    int
 		hash string
 	}{{r.From, r.FromHash}, {r.To, r.ToHash}} {
-		if reason := checkLine(lines, end.n, end.hash); reason != "" {
+		if reason := CheckLine(lines, end.n, end.hash); reason != "" {
 			return nil, reason
 		}
 	}
@@ -249,7 +249,7 @@ func resolveLines(text string, op Op) ([]change, string) {
 func resolveInsert(text string, op Op) ([]change, string) {
 	a := *op.Insert
 	lines := Lines(text)
-	if reason := checkLine(lines, a.Line, a.Hash); reason != "" {
+	if reason := CheckLine(lines, a.Line, a.Hash); reason != "" {
 		return nil, reason
 	}
 	newText := strings.TrimSuffix(op.New, "\n")
@@ -267,8 +267,9 @@ func resolveInsert(text string, op Op) ([]change, string) {
 	return []change{{start: at, end: at, text: newText + "\n"}}, ""
 }
 
-// checkLine is why line n (1-based) cannot be addressed by hash: past the end or changed; "" when it can.
-func checkLine(lines []string, n int, hash string) string {
+// CheckLine is why line n (1-based) cannot be addressed by hash: past the end or changed, with the line as it is;
+// "" when it can.
+func CheckLine(lines []string, n int, hash string) string {
 	if n > len(lines) {
 		return fmt.Sprintf("line %d is past the end: the file has %d lines", n, len(lines))
 	}
