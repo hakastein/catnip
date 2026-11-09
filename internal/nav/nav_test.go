@@ -56,12 +56,14 @@ type disk struct{}
 func (disk) Save(c *Cart) error { return nil }
 
 func keep(s Store, c *Cart) error {
-	c.Add("x")
+	c.Add("x"); c.Add("y"); c.Add("z"); c.Add("w")
 	return s.Save(c)
 }
 `,
-	"go.work":    "go 1.26\n\nuse (\n\t.\n\t./pay\n)\n",
-	"pay/go.mod": "module example.com/pay\n\ngo 1.26\n",
+	"go.work":       "go 1.26\n\nuse (\n\t.\n\t./pay\n\t../ext\n)\n",
+	"../ext/go.mod": "module example.com/ext\n\ngo 1.26\n",
+	"../ext/ext.go": "package ext\n\nfunc Hello() {}\n\nfunc Again() { Hello() }\n",
+	"pay/go.mod":    "module example.com/pay\n\ngo 1.26\n",
 	"pay/pay.go": `package pay
 
 import "example.com/shop/cart"
@@ -110,11 +112,6 @@ func newShop(t *testing.T) string {
 // at is the line of an answer: the address of line n of path and its text.
 func at(path string, n int, text string) string {
 	return fmt.Sprintf("%s:%d#%s: %s\n", filepath.FromSlash(path), n, edit.Hash(text), text)
-}
-
-// atPlaces is the line of an answer of ref with places on it.
-func atPlaces(path string, n int, text string, places int) string {
-	return fmt.Sprintf("%s:%d#%s (%d places): %s\n", filepath.FromSlash(path), n, edit.Hash(text), places, text)
 }
 
 var (
@@ -246,8 +243,8 @@ var (
 	saveImpl = at("cart/store.go", 10, "func (mem) Save(c *Cart) error { return nil }")
 	diskImpl = at("cart/store.go", 14, "func (disk) Save(c *Cart) error { return nil }")
 	addUse7  = at("main.go", 7, "\tc.Add(\"a\")")
-	addUse8  = atPlaces("main.go", 8, "\tc.Add(\"b\"); c.Add(\"c\")", 2)
-	addUse17 = at("cart/store.go", 17, "\tc.Add(\"x\")")
+	addUse8  = at("main.go", 8, "\tc.Add(\"b\"); c.Add(\"c\")")                                    // two places, one line
+	addUse17 = at("cart/store.go", 17, "\tc.Add(\"x\"); c.Add(\"y\"); c.Add(\"z\"); c.Add(\"w\")") // more places than main.go, fewer lines
 )
 
 func TestRef(t *testing.T) {
@@ -259,7 +256,7 @@ func TestRef(t *testing.T) {
 		errs     string
 		answered bool
 	}{
-		{name: "uses by file, most places first", args: []string{"main.go:7", "c.Add"}, limit: 60,
+		{name: "uses by file, most lines first", args: []string{"main.go:7", "c.Add"}, limit: 60,
 			out: "main.go:7 c.Add\n" + addUse7 + addUse8 + addUse17, answered: true},
 		{name: "limit gives a line to each file first", args: []string{"main.go:7", "c.Add"}, limit: 2,
 			out: "main.go:7 c.Add\n" + addUse7 + addUse17 + "1 more lines in 1 files\n", answered: true},
@@ -274,6 +271,8 @@ func TestRef(t *testing.T) {
 			errs: "Save: 3 declarations; ask about one of them by its address:\n" + at("cart/store.go", 5, "\tSave(c *Cart) error") +
 				saveImpl + diskImpl},
 		{name: "no uses", args: []string{"Total"}, limit: 60, out: "Total\n", errs: "Total: no uses found\n"},
+		{name: "a module of go.work outside its directory is of the project", args: []string{"Hello"}, limit: 60,
+			out: "Hello\n" + at("../ext/ext.go", 5, "func Again() { Hello() }"), answered: true},
 	}
 	newShop(t)
 	for _, tt := range tests {

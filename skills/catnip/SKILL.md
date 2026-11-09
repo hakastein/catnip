@@ -94,7 +94,8 @@ catnip ref internal/cart/cart.go:57 s.store.Write   # uses, then "implementation
 catnip ref --limit 200 Store.Write                  # more than the default 60 lines
 ```
 
-Files with most places come first; when the answer ends with `<n> more lines in <m> files`, raise `--limit`.
+Files with most lines come first; several places on a line print as one line. When the answer ends with
+`<n> more lines in <m> files`, raise `--limit`.
 
 ## Exit codes
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,6 +20,7 @@ import (
 
 	agentlsp "github.com/hakastein/agent-lsp"
 	"github.com/hakastein/agent-lsp/golang"
+	"golang.org/x/mod/modfile"
 
 	"github.com/hakastein/catnip/internal/edit"
 	"github.com/hakastein/catnip/internal/view"
@@ -92,6 +94,7 @@ func position(s string) (Question, error) {
 type Navigator struct {
 	cwd  string
 	root string
+	mods []string // the directories of the modules the go.work of root uses; none for a module root
 	ix   provider
 }
 
@@ -116,9 +119,8 @@ func (n *Navigator) Def(qs []Question, body bool, out, errw io.Writer) bool {
 
 // Ref answers the questions in blocks, as Def does. The lines of an answer are the uses of the symbol, then after
 // the line "implementations:" the types and methods that implement it. Each group goes by file, the files with most
-// places first; places on one line are one line, marked <path>:<line>#<hash> (<n> places): <text>. At most limit
-// lines print: first a line of each file, then the rest in order; a group with lines left out ends with the line
-// "<n> more lines in <m> files".
+// lines first; places on one line print as one line. At most limit lines print: first a line of each file, then
+// the rest in order; a group with lines left out ends with the line "<n> more lines in <m> files".
 func (n *Navigator) Ref(qs []Question, limit int, out, errw io.Writer) bool {
 	return n.answer(qs, out, errw, func(q Question) (string, error) { return n.ref(q, limit) })
 }
@@ -173,7 +175,7 @@ func (n *Navigator) def(q Question, body bool) (string, error) {
 			return "", err
 		}
 		for l := from; l <= to; l++ {
-			n.line(&b, d.File, lines, l, "")
+			n.line(&b, d.File, lines, l)
 		}
 	}
 	return b.String(), nil
@@ -199,7 +201,7 @@ func (n *Navigator) ref(q Question, limit int) (string, error) {
 				if err != nil {
 					return "", err
 				}
-				n.line(&b, s.File, lines, s.Line, "")
+				n.line(&b, s.File, lines, s.Line)
 			}
 			return "", errors.New(strings.TrimSuffix(b.String(), "\n"))
 		}
@@ -239,19 +241,18 @@ func (n *Navigator) ref(q Question, limit int) (string, error) {
 		}
 		left, leftFiles := 0, 0
 		for _, f := range g.files {
+			if k := len(f.lines) - shown[f]; k > 0 {
+				left, leftFiles = left+k, leftFiles+1
+			}
+			if shown[f] == 0 {
+				continue
+			}
 			lines, err := source(f.path)
 			if err != nil {
 				return "", err
 			}
 			for _, l := range f.lines[:shown[f]] {
-				mark := ""
-				if c := f.places[l]; c > 1 {
-					mark = fmt.Sprintf(" (%d places)", c)
-				}
-				n.line(&b, f.path, lines, l, mark)
-			}
-			if k := len(f.lines) - shown[f]; k > 0 {
-				left, leftFiles = left+k, leftFiles+1
+				n.line(&b, f.path, lines, l)
 			}
 		}
 		if left > 0 {
@@ -264,29 +265,27 @@ func (n *Navigator) ref(q Question, limit int) (string, error) {
 // file is the places of a group of ref in one file.
 type file struct {
 	path   string
-	all    int         // the number of places
-	lines  []int       // the lines with places, in order
-	places map[int]int // the number of places by line
+	lines  []int        // the lines with places, in order
+	places map[int]bool // the lines with places
 }
 
-// byFile is the places of locs by file, the files with most places first, otherwise in the order of locs.
+// byFile is the places of locs by file, the files with most lines first, otherwise in the order of locs.
 func byFile(locs []agentlsp.Location) []*file {
 	var files []*file
 	byPath := map[string]*file{}
 	for _, l := range locs {
 		f := byPath[l.File]
 		if f == nil {
-			f = &file{path: l.File, places: map[int]int{}}
+			f = &file{path: l.File, places: map[int]bool{}}
 			byPath[l.File] = f
 			files = append(files, f)
 		}
-		if f.places[l.Line] == 0 {
+		if !f.places[l.Line] {
 			f.lines = append(f.lines, l.Line)
 		}
-		f.all++
-		f.places[l.Line]++
+		f.places[l.Line] = true
 	}
-	slices.SortStableFunc(files, func(a, b *file) int { return cmp.Compare(b.all, a.all) })
+	slices.SortStableFunc(files, func(a, b *file) int { return cmp.Compare(len(b.lines), len(a.lines)) })
 	return files
 }
 
@@ -369,13 +368,42 @@ func (n *Navigator) open(dir string) (provider, error) {
 	if err := n.Close(); err != nil {
 		return nil, err
 	}
-	n.ix, n.root = nil, ""
+	n.ix, n.root, n.mods = nil, "", nil
+	mods, err := workModules(root)
+	if err != nil {
+		return nil, err
+	}
 	ix, err := golang.Open(root, nil)
 	if err != nil {
 		return nil, err
 	}
-	n.ix, n.root = ix, root
+	n.ix, n.root, n.mods = ix, root, mods
 	return ix, nil
+}
+
+// workModules is the directories of the modules the go.work of root uses, also outside root; none without a go.work.
+func workModules(root string) ([]string, error) {
+	path := filepath.Join(root, "go.work")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	wf, err := modfile.ParseWork(path, data, nil)
+	if err != nil {
+		return nil, err
+	}
+	var dirs []string
+	for _, u := range wf.Use {
+		dir := filepath.FromSlash(u.Path)
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(root, dir)
+		}
+		dirs = append(dirs, dir)
+	}
+	return dirs, nil
 }
 
 // goRoot is the directory of the go.work nearest above dir, or else of the nearest go.mod, as the go command finds
@@ -480,9 +508,9 @@ func source(path string) ([]string, error) {
 	return edit.Lines(text), nil
 }
 
-// line writes line l of the file at path, given its lines, as <path>:<l>#<hash><mark>: <text>.
-func (n *Navigator) line(b *strings.Builder, path string, lines []string, l int, mark string) {
-	fmt.Fprintf(b, "%s:%d#%s%s: %s\n", n.rel(path), l, edit.Hash(lines[l-1]), mark, lines[l-1])
+// line writes line l of the file at path, given its lines, as <path>:<l>#<hash>: <text>.
+func (n *Navigator) line(b *strings.Builder, path string, lines []string, l int) {
+	fmt.Fprintf(b, "%s:%d#%s: %s\n", n.rel(path), l, edit.Hash(lines[l-1]), lines[l-1])
 }
 
 // declLines is the lines of d: from its doc comment to the end of its signature, with body to its end.
@@ -497,14 +525,17 @@ func declLines(d agentlsp.Declaration, body bool) (from, to int) {
 	return from, to
 }
 
-// rel is path as an answer prints it: relative to the directory of the navigator for a file of the root, otherwise
-// absolute, as in the standard library, the module cache or on another drive.
+// rel is path as an answer prints it: relative to the directory of the navigator for a file of the project, the root
+// and the modules of its go.work, otherwise absolute, as in the standard library, the module cache or on another
+// drive. The project is what agent-lsp marks agentlsp.OriginRoot; the Locations of ref carry no Origin.
 func (n *Navigator) rel(path string) string {
-	if r, err := filepath.Rel(n.root, path); err != nil || !filepath.IsLocal(r) {
-		return path
-	}
-	if r, err := filepath.Rel(n.cwd, path); err == nil {
-		return r
+	for _, dir := range append([]string{n.root}, n.mods...) {
+		if r, err := filepath.Rel(dir, path); err == nil && filepath.IsLocal(r) {
+			if r, err := filepath.Rel(n.cwd, path); err == nil {
+				return r
+			}
+			return path
+		}
 	}
 	return path
 }

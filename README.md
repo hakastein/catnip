@@ -108,7 +108,8 @@ main.go:244 fmt.Fprintln
 - Вопрос без ответа (строка изменилась, выражения на ней нет или оно стоит там несколько раз, объявления нет)
   оставляет строку вопроса, причину с текущей строкой печатает в stderr, остальные вопросы вызова отвечены; код
   выхода — 1.
-- Корень Go — ближайший вверх от файла каталог с `go.work`, иначе с `go.mod`; для имени — от текущего каталога. Кэш
+- Корень Go — ближайший вверх от файла каталог с `go.work`, иначе с `go.mod`; для имени — от текущего каталога. Проект —
+  корень и модули его `go.work`, в том числе вне каталога корня (`use ../ext`). Кэш
   индекса — `agent-lsp/cache.sqlite` в каталоге кэша пользователя: первый вызов в модуле загружает пакеты, следующие
   берут их из кэша.
 
@@ -117,28 +118,28 @@ main.go:244 fmt.Fprintln
 задаётся одним из них.
 
 ```bash
-catnip ref main.go:269 view.ParseTarget          # использования
-catnip ref internal/nav/nav.go:29 Definition     # метод интерфейса: использования и реализации
-catnip ref internal/view/view.go:31#874a ParseTarget  # адрес из ответа def
-catnip ref --limit 5 edit.Hash                   # не больше 5 строк
+catnip ref main.go:288 view.ParseTarget          # использования
+catnip ref internal/nav/nav.go:31 Definition     # метод интерфейса: использования и реализации
+catnip ref internal/view/view.go:34#874a ParseTarget  # адрес из ответа def
+catnip ref --limit 3 edit.Hash                   # не больше 3 строк
 ```
 
 ```
-internal/nav/nav.go:29 Definition
-internal/nav/nav.go:160#d36b: 		if decls, err = ix.Definition(pos); err != nil {
+internal/nav/nav.go:31 Definition
+internal/nav/nav.go:163#d36b: 		if decls, err = ix.Definition(pos); err != nil {
 implementations:
-/home/u/go/pkg/mod/github.com/hakastein/agent-lsp@v0.3.0/golang/golang.go:232#f93a: func (ix *Index) Definition(pos agentlsp.Position) ([]agentlsp.Declaration, error) {
+/home/u/go/pkg/mod/github.com/hakastein/agent-lsp@v0.5.1/golang/golang.go:243#f93a: func (ix *Index) Definition(pos agentlsp.Position) ([]agentlsp.Declaration, error) {
 
 edit.Hash
-internal/edit/apply_test.go:12#4d83 (2 places): 	return &edit.LineRange{From: from, To: to, FromHash: edit.Hash(fromLine), ToHash: edit.Hash(toLine)}
-internal/nav/nav_test.go:105#ae97: 	return fmt.Sprintf("%s:%d#%s: %s\n", filepath.FromSlash(path), n, edit.Hash(text), text)
-…
-19 more lines in 7 files
+internal/edit/apply_test.go:12#4d83: 	return &edit.LineRange{From: from, To: to, FromHash: edit.Hash(fromLine), ToHash: edit.Hash(toLine)}
+internal/nav/nav_test.go:114#ae97: 	return fmt.Sprintf("%s:%d#%s: %s\n", filepath.FromSlash(path), n, edit.Hash(text), text)
+internal/view/view_test.go:62#76bf: 		{name: "line addresses", target: view.Target{Path: "f", From: 1, To: 2}, gutter: "hash", want: "1#" + edit.Hash("a") + "\ta\n2#" + edit.Hash("b") + "\tb\n"},
+21 more lines in 7 files
 ```
 
 - Ответ — блок на вопрос: строка вопроса, использования, затем после строки `implementations:` реализации. Каждая
-  группа — по файлам, файлы по убыванию числа мест, внутри файла — по строкам. Несколько мест на одной строке — одна
-  строка с пометкой `(<n> places)` после адреса.
+  группа — по файлам, файлы по убыванию числа строк, внутри файла — по строкам. Несколько мест на одной строке — одна
+  строка.
 - `--limit` — сколько строк печатать, по умолчанию 60: сначала по строке на каждый файл (использований, потом
   реализаций), затем остальные по порядку. Группа, у которой строки не поместились, кончается строкой
   `<n> more lines in <m> files`.
@@ -157,15 +158,15 @@ catnip show main.go --outline                    # строка каждого �
 
 ```
 $ catnip show internal/nav/nav.go::Close
-30#516c		Close() error
+35#516c		Close() error
 
- 98#75d1	// Close closes the open provider.
- 99#5fd6	func (n *Navigator) Close() error {
-100#53ca		if n.ix == nil {
-101#c0de			return nil
-102#1493		}
-103#7263		return n.ix.Close()
-104#b0a4	}
+104#75d1	// Close closes the open provider.
+105#5fd6	func (n *Navigator) Close() error {
+106#53ca		if n.ix == nil {
+107#c0de			return nil
+108#1493		}
+109#7263		return n.ix.Close()
+110#b0a4	}
 ```
 
 - `<путь>::<символ>` печатает каждое объявление файла с этим именем (`Func`, `Type`, `Type.Method`, `Type.Field`;

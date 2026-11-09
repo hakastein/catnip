@@ -151,10 +151,10 @@ const refHelp = `catnip ref prints the uses of a Go symbol, each line as <path>:
 address catnip show and edit take, then after the line "implementations:" the types and methods
 that implement an interface type or a method of one. The symbol is the last word of an expression
 from the line of a position, or a name. Each question gets a block: the question, then the lines
-of each group by file, the files with most places first; places on one line are one line marked
-<path>:<line>#<hash> (<n> places): <text>. Lines left out end the group as "<n> more lines in <m>
-files". Blocks are separated by an empty line. Paths are relative to the current directory; a file
-outside the project has an absolute path.
+of each group by file, the files with most lines first; places on one line print as one line.
+Lines left out end the group as "<n> more lines in <m> files". Blocks are separated by an empty
+line. Paths are relative to the current directory; a file outside the project has an absolute
+path.
 
 usage: catnip ref [--limit <n>] <question>...
   <path>:<line> <expression>           the expression stands on the line once
