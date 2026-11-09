@@ -48,6 +48,7 @@ func TestRun(t *testing.T) {
 		{name: "broken config", project: `{`, before: "a\n", args: []string{"edit", "p/a.txt", "--replace", "a", "b"}, code: badUsage, after: "a\n"},
 		{name: "written, check failed", project: `{"*.txt": {"check": {"no": "false"}}}`, before: "a\n", args: []string{"write", "p/a.txt"}, stdin: "w\n", code: checkFailed, after: "w\n"},
 		{name: "show past the end", project: `{}`, before: "a\n", args: []string{"show", "p/a.txt:5"}, code: notApplied, after: "a\n"},
+		{name: "show -C0 glued", project: `{}`, before: "a\nb\nc\n", args: []string{"show", "-C0", "p/a.txt:2"}, code: ok, after: "a\nb\nc\n", tail: "2#" + edit.Hash("b") + "\tb\n"},
 		{name: "show prints line addresses", project: `{}`, before: "a\n", args: []string{"show", "p/a.txt"}, code: ok, after: "a\n", tail: "1#" + edit.Hash("a") + "\ta\n"},
 		{name: "show a symbol outside Go code", project: `{}`, before: "a\n", args: []string{"show", "p/a.txt::a"}, code: notApplied, after: "a\n"},
 		{name: "show --outline of a range", project: `{}`, before: "a\n", args: []string{"show", "--outline", "p/a.txt:1-1"}, code: badUsage, after: "a\n"},
