@@ -1,6 +1,6 @@
 ---
 name: catnip
-description: "Use for every file read or edit, by file tools or shell: cat, sed, head/tail, heredoc, python; to find where a Go symbol is declared, used or implemented, or read one by name."
+description: "Use for every file read or edit, by file tools or shell: cat, sed, head/tail, heredoc, python; to find where a Go symbol is declared, used or implemented, read one by name, or rename one."
 ---
 
 # catnip
@@ -97,11 +97,24 @@ catnip ref --limit 200 Store.Write                  # more than the default 60 l
 Files with most lines come first; several places on a line print as one line. When the answer ends with
 `<n> more lines in <m> files`, raise `--limit`.
 
+## Rename (Go)
+
+Instead of editing every use by hand, rename a symbol with all its uses in one command. The symbol is given as in
+`def` by a position.
+
+```bash
+catnip rename internal/cart/cart.go:57 s.store.Write Put && go test ./...
+```
+
+Files of every platform (`*_windows.go`) are renamed too, and with an interface method the methods of the types the
+code converts to the interface. A refusal (the name conflicts, the symbol is not of the project) writes nothing; the changed lines and the fixers and checks
+print per file as after `edit`.
+
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | written, checks passed |
-| 1 | nothing written; `def`, `ref`: a question has no answer |
+| 1 | nothing written, `rename` refused; `def`, `ref`: a question has no answer |
 | 2 | bad arguments or config |
-| 3 | written, but a check failed or the file was written in part |
+| 3 | written, but a check failed or the file was written in part; `rename`: stderr ends with the files written |

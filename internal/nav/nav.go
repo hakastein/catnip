@@ -1,6 +1,7 @@
 // Package nav answers where a symbol is declared and where it is used: by a position in a file with an expression
 // from its line, or by a name; and which lines of a file show its declarations. The answers come from the provider
-// of the file's language and print as lines with catnip addresses.
+// of the file's language and print as lines with catnip addresses. It also renames a symbol in every file of its
+// project and writes them as edit does.
 package nav
 
 import (
@@ -20,7 +21,10 @@ import (
 	agentlsp "github.com/hakastein/agent-lsp"
 	"github.com/hakastein/agent-lsp/golang"
 
+	"github.com/hakastein/catnip/internal/check"
+	"github.com/hakastein/catnip/internal/config"
 	"github.com/hakastein/catnip/internal/edit"
+	"github.com/hakastein/catnip/internal/store"
 	"github.com/hakastein/catnip/internal/view"
 )
 
@@ -28,6 +32,7 @@ import (
 type provider interface {
 	Definition(pos agentlsp.Position) ([]agentlsp.Declaration, error)
 	References(pos agentlsp.Position) (agentlsp.References, error)
+	Rename(pos agentlsp.Position, name string) (agentlsp.Renaming, error)
 	Symbols(name string) ([]agentlsp.Symbol, error)
 	Outline(file string) ([]agentlsp.Symbol, error)
 	Origin(path string) agentlsp.Origin
@@ -285,6 +290,115 @@ func byFile(locs []agentlsp.Location) []*file {
 	}
 	slices.SortStableFunc(files, func(a, b *file) int { return cmp.Compare(len(b.lines), len(a.lines)) })
 	return files
+}
+
+// Rename renames the symbol of q, a question with a position, to name in every file of its project and returns the
+// exit code of catnip. Before any file is written, every edit must replace the old name in the file as it is, and the
+// config of every file must load. Then the files are written whole, and for each one its changed lines print as edit
+// prints them and the fixers and checks configured for it run. The codes: 0 written, every check passed; 1 nothing
+// written: the provider refused, or the position or an edit does not match the file; 2 a config is broken, nothing
+// written; 3 written, but a write, a fixer or a check failed, and errw ends with the files written whole.
+func (n *Navigator) Rename(q Question, name string, showFixDiff bool, out, errw io.Writer) int {
+	files, err := n.renamed(q, name)
+	if err != nil {
+		fmt.Fprintf(errw, "%s: %v\nnothing written\n", q.Text, err)
+		return 1
+	}
+	cfgs := make([]*config.Config, len(files))
+	for i, f := range files {
+		if cfgs[i], err = config.Load(filepath.Dir(f.path)); err != nil {
+			fmt.Fprintf(errw, "%v\nnothing written\n", err)
+			return 2
+		}
+	}
+	var written []string
+	for _, f := range files {
+		if err = store.Write(f.path, f.after); err != nil {
+			break
+		}
+		written = append(written, f.path)
+	}
+	if err != nil && len(written) == 0 && !errors.Is(err, store.ErrPartial) {
+		fmt.Fprintf(errw, "%v\nnothing written\n", err)
+		return 1
+	}
+	passed := err == nil
+	for i, path := range written {
+		fmt.Fprint(out, edit.Diff(path, files[i].before, files[i].after))
+		passed = check.Report(cfgs[i], path, showFixDiff, out, errw) && passed
+	}
+	if passed {
+		return 0
+	}
+	if err != nil {
+		fmt.Fprintln(errw, err)
+	}
+	fmt.Fprintf(errw, "written: %s\n", strings.Join(written, ", "))
+	return 3
+}
+
+// renaming is a file that a rename changes: its content before and after.
+type renaming struct {
+	path          string
+	before, after []byte
+}
+
+// renamed is the files that renaming the symbol of q to name changes, by the edits of the provider.
+func (n *Navigator) renamed(q Question, name string) ([]renaming, error) {
+	ix, pos, err := n.at(q)
+	if err != nil {
+		return nil, err
+	}
+	r, err := ix.Rename(pos, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(r.Edits) == 0 {
+		return nil, errors.New("no symbol to rename")
+	}
+	w := lastWord(q.Expr)
+	old := q.Expr[w[0]:w[1]]
+	var files []renaming
+	for i, j := 0, 0; i < len(r.Edits); i = j { // the edits come by file
+		for j = i; j < len(r.Edits) && r.Edits[j].File == r.Edits[i].File; j++ {
+		}
+		path := n.rel(r.Edits[i].File)
+		before, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		after, err := apply(path, before, r.Edits[i:j], old)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, renaming{path, before, after})
+	}
+	return files, nil
+}
+
+// apply is raw, the content of the file at path, with edits, in order, each of which must replace old on one line.
+// Edits address bytes, so the BOM and line endings of the file stay as they are.
+func apply(path string, raw []byte, edits []agentlsp.Edit, old string) ([]byte, error) {
+	starts := []int{0} // where each line starts
+	for i, b := range raw {
+		if b == '\n' {
+			starts = append(starts, i+1)
+		}
+	}
+	var out []byte
+	at := 0
+	for _, e := range edits {
+		start, end := -1, -1
+		if e.Line <= len(starts) && e.EndLine == e.Line {
+			start, end = starts[e.Line-1]+e.Column-1, starts[e.Line-1]+e.EndColumn-1
+		}
+		if start < at || end < start || end > len(raw) || string(raw[start:end]) != old {
+			return nil, fmt.Errorf("%s:%d:%d: %q is not there; the file changed after it was read", path, e.Line, e.Column, old)
+		}
+		out = append(append(out, raw[at:start]...), e.NewText...)
+		at = end
+	}
+	return append(out, raw[at:]...), nil
 }
 
 // symbols is the declarations named name in the code of the root of the current directory, with its provider.
