@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"go/token"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -15,20 +16,28 @@ import (
 	"github.com/hakastein/catnip/internal/edit"
 )
 
-// Target is what to show: the whole file, lines From..To, or the lines around Line.
+// Target is what to show: the whole file, lines From..To, the lines around Line, or the declarations of Symbol.
 type Target struct {
 	Path     string
 	From, To int    // 0, 0 for the whole file
 	Line     int    // the asked position; 0 for a range
 	Column   int    // the column of the asked position; 0 without one
 	Hash     string // the hash Line must have, from an address <line>#<hash>; "" without one
+	Symbol   string // the name of a declaration in the file, from <path>::<symbol>; "" without one
 }
 
 var suffix = regexp.MustCompile(`^(.+?):(\d+)(?:-(\d+)|:(\d+)|(#.*))?$`)
 
 // ParseTarget reads path, path:from-to, path:line, path:line:column (1-based, as positions in LSP tools print them)
-// or path:line#hash, the address catnip prints. A position shows context lines on each side.
+// path:line#hash, the address catnip prints, or path::symbol. A position shows context lines on each side. The symbol
+// is Name or Type.Name of Go identifiers after the last ::; otherwise :: is part of the path.
 func ParseTarget(s string, context int) (Target, error) {
+	if i := strings.LastIndex(s, "::"); i > 0 && isSymbol(s[i+2:]) {
+		if suffix.MatchString(s[:i]) {
+			return Target{}, fmt.Errorf("%s: want <path>::<symbol>, a symbol takes no line", s)
+		}
+		return Target{Path: s[:i], Symbol: s[i+2:]}, nil
+	}
 	m := suffix.FindStringSubmatch(s)
 	if m == nil {
 		return Target{Path: s}, nil
@@ -58,6 +67,12 @@ func ParseTarget(s string, context int) (Target, error) {
 		t.Hash = r.FromHash
 	}
 	return t, nil
+}
+
+// isSymbol reports whether s is Name or Type.Name, as show takes a symbol after ::.
+func isSymbol(s string) bool {
+	typ, name, found := strings.Cut(s, ".")
+	return token.IsIdentifier(typ) && (!found || token.IsIdentifier(name))
 }
 
 // Gutters are what Render prints before each line: its address <n>#<hash>, its number, or nothing.
