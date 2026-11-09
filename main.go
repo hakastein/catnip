@@ -222,6 +222,9 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 	var pos []string
 	args = slices.Clone(args) // args shares its array with the recorded argv
 	for i, a := range args {
+		if a == "--" {
+			break
+		}
 		if len(a) > 2 && strings.HasPrefix(a, "-C") && a[2] != '=' {
 			args[i] = "-C=" + a[2:] // -C0 as grep takes it; flag reads it as a flag named C0
 		}
