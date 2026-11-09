@@ -325,9 +325,7 @@ func (n *Navigator) Rename(q Question, name string, showFixDiff bool, out, errw 
 	passed := err == nil
 	for i, path := range written {
 		fmt.Fprint(out, edit.Diff(path, files[i].before, files[i].after))
-		if err == nil {
-			passed = check.Report(cfgs[i], path, showFixDiff, out, errw) && passed
-		}
+		passed = check.Report(cfgs[i], path, showFixDiff, out, errw) && passed
 	}
 	if passed {
 		return 0
