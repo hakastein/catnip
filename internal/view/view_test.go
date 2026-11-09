@@ -23,6 +23,7 @@ func TestParseTarget(t *testing.T) {
 		{in: "dir/a.go:3-9", want: view.Target{Path: "dir/a.go", From: 3, To: 9}},
 		{in: "a.go:10", want: view.Target{Path: "a.go", From: 8, To: 12, Line: 10}},
 		{in: "a.go:10:7", want: view.Target{Path: "a.go", From: 8, To: 12, Line: 10, Column: 7}},
+		{in: "a.go:3:0", want: view.Target{Path: "a.go", From: 1, To: 5, Line: 3}},
 		{in: "a.go:1", want: view.Target{Path: "a.go", From: 1, To: 3, Line: 1}},
 		{in: "a:b.go", want: view.Target{Path: "a:b.go"}},
 		{in: `C:\src\a.go`, want: view.Target{Path: `C:\src\a.go`}},
