@@ -3,7 +3,7 @@ module github.com/hakastein/catnip
 go 1.26.0
 
 require (
-	github.com/hakastein/agent-lsp v0.5.1
+	github.com/hakastein/agent-lsp v0.6.0
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/stretchr/testify v1.12.1
 	modernc.org/sqlite v1.61.1
@@ -26,5 +26,3 @@ require (
 )
 
 replace github.com/VKCOM/php-parser => github.com/hakastein/php-parser v0.8.3-0.20261019132731-b976bc1bafe4
-
-replace github.com/hakastein/agent-lsp => /home/hakastein/work/phplslow
