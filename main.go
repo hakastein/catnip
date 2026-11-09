@@ -73,10 +73,15 @@ catnip ref [--limit <n>] <path>:<line>[:<column> | #<hash>] <expression>... | <n
   the one named <name>, and the types and methods that implement it, by file, each line
   after its address; one block per question; exit 1 when a question has no answer
 
+catnip rename [--show-fix-diff] <path>:<line>[:<column> | #<hash>] <expression> <new name>
+  rename the Go symbol at the last word of the expression from the line in every file of
+  its project; nothing is written unless every edit matches; prints what changed and runs
+  the fixers and checks configured for each changed file
+
 catnip stats
   open a report on recorded catnip calls in the browser
 
-After edit and write catnip prints what changed and runs the fixers and checks
+After edit, write and rename catnip prints what changed and runs the fixers and checks
 configured for the file. catnip <command> --help prints all flags of the command.
 ` + exitCodes
 
@@ -172,6 +177,27 @@ exit: 0 every question answered; 1 a question has no answer: the line changed, t
   uses; the other questions are answered; 2 bad arguments
 `
 
+const renameHelp = `catnip rename renames a Go symbol and its uses in every file of its project, the
+files of every build platform included; renaming an interface method renames the methods of the
+types the code converts to the interface. The symbol is the last word of an expression from the
+line of a position. Before any file is written every edit must match the file, so a refused
+rename writes nothing. Each file is written whole, keeping its BOM and line endings; then catnip
+prints its changed lines and runs the fixers and checks configured for it.
+
+usage: catnip rename [flags] <position> <expression> <new name>
+  <path>:<line> <expression>           the expression stands on the line once
+  <path>:<line>:<column> <expression>  the expression that covers the column, in bytes from 1
+  <path>:<line>#<hash> <expression>    the line by its address; it must not have changed
+
+flags:
+  --show-fix-diff  also print what each fixer changed
+
+exit: 0 written, checks passed; 1 nothing written: the line changed, the expression is not on
+  it, no symbol, the new name conflicts, the symbol is declared outside the project, a package;
+  2 bad arguments or config; 3 written, but a write, fixer or check failed: stderr ends with
+  the files written
+`
+
 const statsHelp = `catnip stats serves a report on recorded catnip calls at a local address until interrupted,
 prints the address and opens it in the browser. Every other call is recorded in
 <user config dir>/catnip/stats.db.
@@ -182,7 +208,7 @@ exit: 1 the report failed to start or stopped, 2 bad arguments
 `
 
 // helps are the helps of the commands by name.
-var helps = map[string]string{"show": showHelp, "edit": editHelp, "write": writeHelp, "def": defHelp, "ref": refHelp, "stats": statsHelp}
+var helps = map[string]string{"show": showHelp, "edit": editHelp, "write": writeHelp, "def": defHelp, "ref": refHelp, "rename": renameHelp, "stats": statsHelp}
 
 func main() {
 	call := stats.Call{Time: time.Now(), Argv: os.Args[1:]}
@@ -217,6 +243,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.C
 		return def(args[1:], stdout, stderr, call)
 	case "ref":
 		return ref(args[1:], stdout, stderr, call)
+	case "rename":
+		return rename(args[1:], stdout, stderr, call)
 	case "stats":
 		return statsCmd(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
@@ -257,7 +285,6 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 	blame := fl.Bool("blame", false, "add git blame of each line")
 	context := fl.Int("C", 5, "lines of context around a position")
 	outline := fl.Bool("outline", false, "the line of each declaration of a Go file")
-	var pos []string
 	args = slices.Clone(args) // args shares its array with the recorded argv
 	for i, a := range args {
 		if a == "--" {
@@ -267,11 +294,7 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 			args[i] = "-C=" + a[2:] // -C0 as grep takes it; flag reads it as a flag named C0
 		}
 	}
-	err := fl.Parse(args)
-	for err == nil && fl.NArg() > 0 { // flags may follow the target
-		pos = append(pos, fl.Arg(0))
-		err = fl.Parse(fl.Args()[1:])
-	}
+	pos, err := operands(fl, args)
 	switch {
 	case err != nil:
 	case !slices.Contains(view.Gutters, *gutter):
@@ -462,29 +485,10 @@ func commit(cfg *config.Config, path string, before, after []byte, showFixDiff b
 	} else {
 		fmt.Fprint(stdout, edit.Diff(path, before, after))
 	}
-	fix, checks := cfg.For(path)
-	outcomes, err := check.Run(cfg.Root, path, fix, checks)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
+	if !check.Report(cfg, path, showFixDiff, stdout, stderr) {
 		return checkFailed
 	}
-	code := ok
-	for _, o := range outcomes {
-		switch {
-		case o.Failed != "":
-			fmt.Fprintf(stderr, "%s: failed\n%s\n", o.Name, o.Failed)
-			code = checkFailed
-		case o.Diff == "":
-			fmt.Fprintf(stdout, "%s: passed\n", o.Name)
-		}
-		if o.Diff != "" {
-			fmt.Fprintf(stdout, "%s: fixed\n", o.Name)
-		}
-		if o.Diff != "" && showFixDiff {
-			fmt.Fprint(stdout, o.Diff)
-		}
-	}
-	return code
+	return ok
 }
 
 func def(args []string, stdout, stderr io.Writer, call *stats.Call) int {
@@ -494,7 +498,7 @@ func def(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 	if err != nil {
 		return usageError(err, defHelp, stdout, stderr)
 	}
-	return navigate(stdout, stderr, func(n *nav.Navigator) bool { return n.Def(qs, *body, stdout, stderr) })
+	return navigate(stdout, stderr, func(n *nav.Navigator) int { return answered(n.Def(qs, *body, stdout, stderr)) })
 }
 
 func ref(args []string, stdout, stderr io.Writer, call *stats.Call) int {
@@ -507,17 +511,45 @@ func ref(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 	if err != nil {
 		return usageError(err, refHelp, stdout, stderr)
 	}
-	return navigate(stdout, stderr, func(n *nav.Navigator) bool { return n.Ref(qs, *limit, stdout, stderr) })
+	return navigate(stdout, stderr, func(n *nav.Navigator) int { return answered(n.Ref(qs, *limit, stdout, stderr)) })
+}
+
+func rename(args []string, stdout, stderr io.Writer, call *stats.Call) int {
+	fl := newFlags("rename")
+	showFixDiff := fl.Bool("show-fix-diff", false, "also print what each fixer changed")
+	ops, err := operands(fl, args)
+	var qs []nav.Question
+	if err == nil && len(ops) != 3 {
+		err = fmt.Errorf("rename %q: want <position> <expression> <new name>", ops)
+	}
+	if err == nil {
+		qs, err = nav.Parse("rename", ops[:2])
+	}
+	if err == nil && qs[0].Path == "" {
+		err = fmt.Errorf("rename %q: %s is not a position <path>:<line>", ops, ops[0])
+	}
+	if err != nil {
+		return usageError(err, renameHelp, stdout, stderr)
+	}
+	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
+	call.File = qs[0].Path
+	return navigate(stdout, stderr, func(n *nav.Navigator) int { return n.Rename(qs[0], ops[2], *showFixDiff, stdout, stderr) })
+}
+
+// operands parses the flags in args, which may also follow the operands, and returns the operands.
+func operands(fl *flag.FlagSet, args []string) ([]string, error) {
+	var ops []string
+	err := fl.Parse(args)
+	for err == nil && fl.NArg() > 0 {
+		ops = append(ops, fl.Arg(0))
+		err = fl.Parse(fl.Args()[1:])
+	}
+	return ops, err
 }
 
 // questions parses the flags and questions of a navigation command and adds the flags and the first path to call.
 func questions(fl *flag.FlagSet, args []string, call *stats.Call) ([]nav.Question, error) {
-	var questions []string
-	err := fl.Parse(args)
-	for err == nil && fl.NArg() > 0 { // flags may follow the questions
-		questions = append(questions, fl.Arg(0))
-		err = fl.Parse(fl.Args()[1:])
-	}
+	questions, err := operands(fl, args)
 	if err != nil {
 		return nil, err
 	}
@@ -535,23 +567,28 @@ func questions(fl *flag.FlagSet, args []string, call *stats.Call) ([]nav.Questio
 	return qs, nil
 }
 
-// navigate answers with a navigator in the current directory; answer reports whether every question was answered.
-func navigate(stdout, stderr io.Writer, answer func(*nav.Navigator) bool) int {
+// navigate answers with a navigator in the current directory; answer gives the exit code.
+func navigate(stdout, stderr io.Writer, answer func(*nav.Navigator) int) int {
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return notApplied
 	}
 	n := nav.New(cwd)
-	answered := answer(n)
+	code := answer(n)
 	if err := n.Close(); err != nil {
 		fmt.Fprintln(stderr, err)
-		return notApplied
+		return max(code, notApplied)
 	}
-	if !answered {
-		return notApplied
+	return code
+}
+
+// answered is the exit code of def and ref: whether every question was answered.
+func answered(all bool) int {
+	if all {
+		return ok
 	}
-	return ok
+	return notApplied
 }
 
 func statsCmd(args []string, stdout, stderr io.Writer) int {

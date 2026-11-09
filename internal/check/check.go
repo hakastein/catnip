@@ -2,6 +2,8 @@
 package check
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -40,6 +42,35 @@ func Run(dir, file string, fix, check []config.Command) ([]Outcome, error) {
 		out = append(out, run(dir, c))
 	}
 	return out, nil
+}
+
+// Report runs the fixers and checks of cfg on the written file and prints their outcomes, each under its name:
+// "passed", or "fixed" with what the fixer changed when showFixDiff, to out; "failed" with the output of the command
+// to errw. It reports whether every fixer and check passed.
+func Report(cfg *config.Config, file string, showFixDiff bool, out, errw io.Writer) bool {
+	fix, checks := cfg.For(file)
+	outcomes, err := Run(cfg.Root, file, fix, checks)
+	if err != nil {
+		fmt.Fprintln(errw, err)
+		return false
+	}
+	passed := true
+	for _, o := range outcomes {
+		switch {
+		case o.Failed != "":
+			fmt.Fprintf(errw, "%s: failed\n%s\n", o.Name, o.Failed)
+			passed = false
+		case o.Diff == "":
+			fmt.Fprintf(out, "%s: passed\n", o.Name)
+		}
+		if o.Diff != "" {
+			fmt.Fprintf(out, "%s: fixed\n", o.Name)
+		}
+		if o.Diff != "" && showFixDiff {
+			fmt.Fprint(out, o.Diff)
+		}
+	}
+	return passed
 }
 
 func run(dir string, c config.Command) Outcome {

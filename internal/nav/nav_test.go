@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hakastein/catnip/internal/config"
 	"github.com/hakastein/catnip/internal/edit"
 	"github.com/hakastein/catnip/internal/nav"
 	"github.com/hakastein/catnip/internal/view"
@@ -88,6 +90,9 @@ func main() {
 }
 `,
 	"notes.txt": "Add\n",
+	// an interface method with an implementation and a use in a file of one platform, with a BOM and CRLF
+	"cart/clock.go":         clockGo,
+	"cart/clock_windows.go": clockWindows,
 	// a module with a vendor directory beside the root
 	"../vend/go.mod":                        "module example.com/vend\n\ngo 1.26\n\nrequire example.com/dep v1.0.0\n",
 	"../vend/vendor/modules.txt":            "# example.com/dep v1.0.0\n## explicit; go 1.26\nexample.com/dep\n",
@@ -101,11 +106,11 @@ func main() {
 }
 
 // newShop writes shop into a fresh directory, makes it the current one and gives the rest of the test a fresh user
-// cache, so the tests never touch the user's cache.
+// cache and config, so the tests never touch the user's.
 func newShop(t *testing.T) string {
 	t.Helper()
 	cache := t.TempDir()
-	for _, name := range []string{"HOME", "XDG_CACHE_HOME", "LOCALAPPDATA"} {
+	for _, name := range []string{"HOME", "XDG_CACHE_HOME", "LOCALAPPDATA", "XDG_CONFIG_HOME", "AppData"} {
 		t.Setenv(name, cache)
 	}
 	dir, err := filepath.EvalSymlinks(t.TempDir()) // the go command refuses a Windows short name such as RUNNER~1
@@ -305,6 +310,76 @@ func TestRef(t *testing.T) {
 			assert.Equal(t, tt.out, out.String())
 			assert.Equal(t, tt.errs, errs.String())
 			assert.Equal(t, tt.answered, answered)
+		})
+	}
+}
+
+var (
+	clockGo      = "package cart\n\n// Clock tells the time.\ntype Clock interface {\n\tNow() int\n}\n\ntype wall struct{}\n\nfunc (wall) Now() int { return 1 }\n\nvar _ Clock = wall{}\n"
+	clockWindows = "\ufeffpackage cart\r\n\r\nfunc tick(c Clock) int { return c.Now() }\r\n"
+	clockShop    = map[string]string{"cart/clock.go": clockGo, "cart/clock_windows.go": clockWindows}
+	clockDiff    = filepath.FromSlash("cart/clock.go:5\n-\t\tNow() int\n+\t\tHour() int\ncart/clock.go:10\n") +
+		"-\tfunc (wall) Now() int { return 1 }\n+\tfunc (wall) Hour() int { return 1 }\n"
+	windowsDiff = filepath.FromSlash("cart/clock_windows.go:3\n") +
+		"-\tfunc tick(c Clock) int { return c.Now() }\n+\tfunc tick(c Clock) int { return c.Hour() }\n"
+)
+
+func TestRename(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		newName string
+		config  string
+		out     string
+		errs    string // <dir> stands for the directory of the project, <up> for the one that holds it
+		code    int
+		files   map[string]string // the content of files after
+	}{
+		{name: "an interface method, its implementation and a use in a file of one platform; each file checked",
+			args: []string{"cart/clock.go:5", "Now"}, newName: "Hour", config: `{"*.go": {"check": {"has Hour": "grep -q Hour {file}"}}}`,
+			out:  clockDiff + "has Hour: passed\n" + windowsDiff + "has Hour: passed\n",
+			code: 0, files: map[string]string{"cart/clock.go": strings.ReplaceAll(clockGo, "Now", "Hour"),
+				"cart/clock_windows.go": "\ufeffpackage cart\r\n\r\nfunc tick(c Clock) int { return c.Hour() }\r\n"}},
+		{name: "a check failed in one file: written, the files listed",
+			args: []string{"cart/clock.go:5", "Now"}, newName: "Hour", config: `{"*.go": {"check": {"has tick": "grep -q tick {file}"}}}`,
+			out:  clockDiff + windowsDiff + "has tick: passed\n",
+			errs: "has tick: failed\nexit status 1\nwritten: " + filepath.FromSlash("cart/clock.go, cart/clock_windows.go") + "\n",
+			code: 3, files: map[string]string{"cart/clock.go": strings.ReplaceAll(clockGo, "Now", "Hour")}},
+		{name: "a broken config: nothing written", args: []string{"cart/clock.go:5", "Now"}, newName: "Hour", config: `{`,
+			errs: "<dir>/.catnip.json: unexpected EOF\nnothing written\n", code: 2, files: clockShop},
+		{name: "the new name conflicts", args: []string{"cart/clock_windows.go:3", "tick"}, newName: "keep", config: `{}`,
+			errs: "cart/clock_windows.go:3 tick: go: rename at <dir>/cart/clock_windows.go:3:6: <dir>/cart/clock_windows.go:3:6: " +
+				"renaming this func \"tick\" to \"keep\"\n<dir>/cart/store.go:16:6:\tconflicts with func in same block\nnothing written\n",
+			code: 1, files: clockShop},
+		{name: "declared outside the project", args: []string{"../rep/main.go:5", "far.Away"}, newName: "Far", config: `{}`,
+			errs: "../rep/main.go:5 far.Away: go: rename at <up>/rep/main.go:5:19: Away is declared outside the root (module) at " +
+				"<up>/far/far.go:3:6\nnothing written\n", code: 1, files: map[string]string{"../far/far.go": shop["../far/far.go"]}},
+		{name: "a package", args: []string{"cart/clock.go:1", "cart"}, newName: "shop", config: `{}`,
+			errs: "cart/clock.go:1 cart: go: rename at <dir>/cart/clock.go:1:9: package cart: not supported\nnothing written\n",
+			code: 1, files: clockShop},
+		{name: "no symbol", args: []string{"cart/clock.go:3", "time"}, newName: "hour", config: `{}`,
+			errs: "cart/clock.go:3 time: no symbol to rename\nnothing written\n", code: 1, files: clockShop},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := newShop(t)
+			require.NoError(t, os.WriteFile(config.ProjectFile, []byte(tt.config), 0o644))
+			qs, err := nav.Parse("rename", tt.args)
+			require.NoError(t, err)
+			n := nav.New(dir)
+			var out, errs bytes.Buffer
+
+			code := n.Rename(qs[0], tt.newName, false, &out, &errs)
+
+			require.NoError(t, n.Close())
+			assert.Equal(t, tt.code, code)
+			assert.Equal(t, tt.out, out.String())
+			assert.Equal(t, strings.NewReplacer("<dir>", dir, "<up>", filepath.Dir(dir)).Replace(filepath.FromSlash(tt.errs)), errs.String())
+			for path, want := range tt.files {
+				got, err := os.ReadFile(path)
+				require.NoError(t, err)
+				assert.Equal(t, want, string(got), path)
+			}
 		})
 	}
 }

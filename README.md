@@ -9,7 +9,8 @@ CLI для агентов: просмотр и правка файлов, сце
 создаёт файл из stdin. После записи catnip запускает фиксеры и проверки из конфига и сообщает результат кодом
 выхода. `catnip def` отвечает, где объявлен Go-символ, `catnip ref` — где он используется и кто его реализует,
 строками с теми же адресами; `catnip show <путь>::<символ>` печатает объявление Go-символа файла,
-`catnip show <путь> --outline` — строки объявлений файла.
+`catnip show <путь> --outline` — строки объявлений файла; `catnip rename` переименовывает Go-символ во всех файлах
+проекта.
 
 Как агенту пользоваться командами — [`skills/catnip/SKILL.md`](skills/catnip/SKILL.md). `catnip help` даёт
 синтаксис каждой команды и все правки `edit`, `catnip <команда> --help` или `catnip help <команда>` — все флаги одной
@@ -176,14 +177,57 @@ $ catnip show internal/nav/nav.go::Close
   интерфейсов, переменные и константы; имена с одной строки — одной строкой. С диапазоном или символом — код 2.
 - Не-Go файл с `::` или `--outline` — код 1: `no navigation in ".php" files: catnip knows Go (.go)`.
 
+## Переименование
+
+`catnip rename` переименовывает символ Go вместе со всеми его использованиями в проекте. Символ задаётся так же, как
+вопрос `def` по позиции: `путь:строка`, `путь:строка:колонка` или адрес `путь:N#hash` и выражение со строки, курсор — на
+последнем слове выражения.
+
+```bash
+catnip rename internal/store/store.go:35 links hardLinks    # функция
+catnip rename internal/nav/nav.go:49#d6d7 Expr Expression   # поле по адресу из show
+```
+
+```
+internal/store/mode_unix.go:17
+-	// links is the number of hard links to the file.
+-	func links(info fs.FileInfo) uint64 { return uint64(info.Sys().(*syscall.Stat_t).Nlink) }
++	// hardLinks is the number of hard hardLinks to the file.
++	func hardLinks(info fs.FileInfo) uint64 { return uint64(info.Sys().(*syscall.Stat_t).Nlink) }
+gofmt: passed
+internal/store/mode_windows.go:8
+-	// links is 1: FileInfo on Windows carries no link count.
+-	func links(fs.FileInfo) uint64 { return 1 }
++	// hardLinks is 1: FileInfo on Windows carries no link count.
++	func hardLinks(fs.FileInfo) uint64 { return 1 }
+gofmt: passed
+internal/store/store.go:35
+-		if links(info) > 1 { // a rename would detach the other names of the file from the new content
++		if hardLinks(info) > 1 { // a rename would detach the other names of the file from the new content
+gofmt: passed
+```
+
+- Правки дают пакеты корня под linux, darwin и windows, так что `*_windows.go` переименовывается и на Linux; файлы,
+  которые не собирает ни одна из трёх платформ, не правятся. Метод интерфейса переименовывается вместе с методами
+  типов, которые код приводит к интерфейсу. Слово в докблоке объявления, совпадающее со старым именем, тоже меняется.
+- До записи catnip проверяет все правки: каждая заменяет старое имя в файле, каков он сейчас, и конфиг каждого файла
+  читается. Отказ провайдера — новое имя конфликтует с другим символом, символ объявлен вне проекта (стандартная
+  библиотека, зависимость, `vendor/`), метод придётся переименовать у типа из пакета, который не импортирует пакет
+  объявления, метод `String`, `Error` или `Format`, который находит `fmt`, пакет или имя импорта — код 1, причина с
+  местом в stderr, ничего не записано.
+- Каждый файл пишется целиком и атомарно, как у `edit`, с его BOM и окончаниями строк. Затем по каждому файлу по
+  порядку — его изменённые строки и фиксеры и проверки из конфига, как после `edit`; `--show-fix-diff` показывает
+  изменения фиксеров. Между файлами атомарности нет: упавшая запись или проверка — код 3, stderr кончается строкой
+  `written: <файл>, …` с записанными файлами.
+
 ## Коды выхода
 
 | Код | Значение |
 |---|---|
 | 0 | записано, проверки прошли; `def`, `ref`: каждый вопрос отвечен |
-| 1 | ничего не записано: правка не сошлась, файла нет, ошибка ввода-вывода; `def`, `ref`: на вопрос нет ответа; `show`: объявления `<символ>` нет, файл не Go |
+| 1 | ничего не записано: правка не сошлась, файла нет, ошибка ввода-вывода, `rename` отказал; `def`, `ref`: на вопрос нет ответа; `show`: объявления `<символ>` нет, файл не Go |
 | 2 | ошибка аргументов или конфига |
-| 3 | записано, но проверка или фиксер упали, либо файл записан не целиком |
+| 3 | записано, но проверка или фиксер упали, либо файл записан не целиком; `rename`: записаны не все файлы |
 
 ## Статистика
 
