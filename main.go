@@ -57,8 +57,9 @@ catnip edit <path> <edit>...
   apply the edits to the file: all of them, or none if any does not match; every edit
   addresses the file as it was before the command; OLD and NEW may span several lines
 ` + editOps + `
-catnip write <path> < content
-  replace the file with stdin, creating it if missing
+catnip write <path> [<content>]
+  replace the file with the content or, without it, with stdin, creating it if missing;
+  a missing final newline is added to the content
 
 catnip def [--body] <path>:<line>[:<column> | #<hash>] <expression>... | <name>...
   print where the Go symbol at the last word of the expression from the line is declared,
@@ -103,10 +104,13 @@ flags:
   --show-fix-diff  also print what each fixer changed
 ` + exitCodes
 
-const writeHelp = `catnip write writes stdin to a file, creating it if missing. Overwriting keeps the BOM, line
-endings and final newline of the file. Then catnip runs the fixers and checks configured for it.
+const writeHelp = `catnip write writes the content to a file, creating it if missing: an argument, with a missing
+final newline added, or stdin. Overwriting keeps the BOM, line endings and final newline of the file. Then
+catnip runs the fixers and checks configured for it.
 
-usage: catnip write [--show-fix-diff] <path> < content
+usage: catnip write [--show-fix-diff] <path> [<content>]
+  <path> <content>  the content of the argument
+  <path> < content  stdin
 
 flags:
   --show-fix-diff  also print what each fixer changed
@@ -216,6 +220,12 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 	blame := fl.Bool("blame", false, "add git blame of each line")
 	context := fl.Int("C", 5, "lines of context around a position")
 	var pos []string
+	args = slices.Clone(args) // args shares its array with the recorded argv
+	for i, a := range args {
+		if len(a) > 2 && strings.HasPrefix(a, "-C") && a[2] != '=' {
+			args[i] = "-C=" + a[2:] // -C0 as grep takes it; flag reads it as a flag named C0
+		}
+	}
 	err := fl.Parse(args)
 	for err == nil && fl.NArg() > 0 { // flags may follow the target
 		pos = append(pos, fl.Arg(0))
@@ -337,8 +347,8 @@ func dashed(name string) string {
 
 func write(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.Call) int {
 	showFixDiff, args, err := fixFlags("write", args, call)
-	if err == nil && len(args) != 1 {
-		err = fmt.Errorf("write takes one path, got %d", len(args))
+	if err == nil && (len(args) == 0 || len(args) > 2) {
+		err = fmt.Errorf("write takes a path and optionally the content, got %d arguments: %q", len(args), args)
 	}
 	if err != nil {
 		return usageError(err, writeHelp, stdout, stderr)
@@ -350,8 +360,13 @@ func write(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats
 		fmt.Fprintln(stderr, err)
 		return badUsage
 	}
-	data, err := io.ReadAll(stdin)
-	if err != nil {
+	var data []byte
+	if len(args) == 2 {
+		data = []byte(args[1])
+		if len(data) > 0 && data[len(data)-1] != '\n' {
+			data = append(data, '\n') // the content is whole lines, as a heredoc gives them
+		}
+	} else if data, err = io.ReadAll(stdin); err != nil {
 		fmt.Fprintln(stderr, err)
 		return notApplied
 	}
