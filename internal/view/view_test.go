@@ -34,6 +34,11 @@ func TestParseTarget(t *testing.T) {
 		{in: "a.go:3#zz", err: `a.go:3#zz: "3#zz" is not LINE#HASH as catnip show prints it`},
 		{in: "a.go:3#0b1c-4#0b1c", err: `a.go:3#0b1c-4#0b1c: "3#0b1c-4#0b1c" is a range, want one LINE#HASH`},
 		{in: "a.go:9-3", err: "a.go:9-3: range ends before it starts"},
+		{in: "dir/a.go::Cart.Add", want: view.Target{Path: "dir/a.go", Symbol: "Cart.Add"}},
+		{in: "we::ird/a.go::Cart", want: view.Target{Path: "we::ird/a.go", Symbol: "Cart"}},
+		{in: "we::ird/Makefile", want: view.Target{Path: "we::ird/Makefile"}},
+		{in: "d::a.go", want: view.Target{Path: "d::a.go"}},
+		{in: "a.go:3::Cart", err: "a.go:3::Cart: want <path>::<symbol>, a symbol takes no line"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {

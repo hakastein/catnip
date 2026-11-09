@@ -49,9 +49,11 @@ const editOps = `  --replace OLD NEW [--count N]    replace the text OLD found e
 
 const usage = `catnip shows and edits files from the shell; commands chain with && by their exit codes.
 
-catnip show <path>[:<from>-<to> | :<line>[:<column> | #<hash>]]
-  print the file, its lines <from> to <to>, or line <line> with 5 lines on each side;
-  by default each line comes after its address <line>#<hash>, which catnip edit takes
+catnip show <path>[:<from>-<to> | :<line>[:<column> | #<hash>] | ::<symbol>] [--outline]
+  print the file, its lines <from> to <to>, line <line> with 5 lines on each side, or the
+  Go declaration <symbol> (Func, Type, Type.Method) from its doc comment to its end;
+  --outline prints the line of each declaration of a Go file; by default each line comes
+  after its address <line>#<hash>, which catnip edit takes
 
 catnip edit <path> <edit>...
   apply the edits to the file: all of them, or none if any does not match; every edit
@@ -78,22 +80,29 @@ After edit and write catnip prints what changed and runs the fixers and checks
 configured for the file. catnip <command> --help prints all flags of the command.
 ` + exitCodes
 
-const showHelp = `catnip show prints a file, a range of its lines or the lines around a position.
-Without flags each line comes after its address <line>#<hash>, which catnip edit takes.
+const showHelp = `catnip show prints a file, a range of its lines, the lines around a position or the
+declarations of a Go symbol. Without flags each line comes after its address <line>#<hash>, which
+catnip edit takes.
 
-usage: catnip show [flags] <path>[:<from>-<to> | :<line>[:<column> | #<hash>]]
+usage: catnip show [flags] <path>[:<from>-<to> | :<line>[:<column> | #<hash>] | ::<symbol>]
   <path>                    the whole file
   <path>:<from>-<to>        lines <from> to <to>
   <path>:<line>[:<column>]  line <line> with 5 lines on each side
   <path>:<line>#<hash>      the same by the address of the line; it must not have changed
+  <path>::<symbol>          each Go declaration named <symbol> in the file (Func, Type,
+                            Type.Method, Type.Field) from its doc comment to its end;
+                            declarations are separated by an empty line
 
 flags:
   -C N           lines on each side of a position instead of 5
+  --outline      the line of each declaration of a Go file: functions, methods, types,
+                 fields, variables and constants
   --gutter line  only the line number, no hash
   --gutter none  no address
   --blame        the commit, author and date of each line
 
-exit: 0 printed, 1 nothing printed, 2 bad arguments
+exit: 0 printed; 1 nothing printed: no file, the line changed, no declaration <symbol>,
+  not a Go file; 2 bad arguments
 `
 
 const editHelp = `catnip edit applies edits to one file: all of them, or none if any does not match.
@@ -247,7 +256,17 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 	gutter := fl.String("gutter", "hash", "before each line: hash (<n>#<hash>), line (<n>) or none")
 	blame := fl.Bool("blame", false, "add git blame of each line")
 	context := fl.Int("C", 5, "lines of context around a position")
+	outline := fl.Bool("outline", false, "the line of each declaration of a Go file")
 	var pos []string
+	args = slices.Clone(args) // args shares its array with the recorded argv
+	for i, a := range args {
+		if a == "--" {
+			break
+		}
+		if len(a) > 2 && strings.HasPrefix(a, "-C") && a[2] != '=' {
+			args[i] = "-C=" + a[2:] // -C0 as grep takes it; flag reads it as a flag named C0
+		}
+	}
 	err := fl.Parse(args)
 	for err == nil && fl.NArg() > 0 { // flags may follow the target
 		pos = append(pos, fl.Arg(0))
@@ -267,34 +286,63 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 	}
 	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
 	t, err := view.ParseTarget(pos[0], *context)
+	if err == nil && *outline && (t.From != 0 || t.Symbol != "") {
+		err = fmt.Errorf("--outline %s: want a path without lines or a symbol", pos[0])
+	}
 	if err != nil {
 		return usageError(err, showHelp, stdout, stderr)
 	}
 	call.File = t.Path
+	ts := []view.Target{t}
+	if *outline || t.Symbol != "" {
+		if ts, err = declarations(t, *outline); err != nil {
+			fmt.Fprintln(stderr, err)
+			return notApplied
+		}
+	}
 	raw, err := os.ReadFile(t.Path)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return notApplied
 	}
 	text, _ := edit.Decode(raw)
-	var notes []string
-	if *blame {
-		from, to, err := t.Lines(len(edit.Lines(text)))
-		if err == nil {
-			notes, err = view.Blame(t.Path, from, to)
+	for i, t := range ts {
+		if i > 0 && !*outline { // declarations of one name print as blocks
+			fmt.Fprintln(stdout)
 		}
+		var notes []string
+		if *blame {
+			from, to, err := t.Lines(len(edit.Lines(text)))
+			if err == nil {
+				notes, err = view.Blame(t.Path, from, to)
+			}
+			if err != nil {
+				fmt.Fprintln(stderr, err)
+				return notApplied
+			}
+		}
+		out, err := view.Render(text, t, *gutter, notes)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return notApplied
 		}
+		fmt.Fprint(stdout, out)
 	}
-	out, err := view.Render(text, t, *gutter, notes)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return notApplied
-	}
-	fmt.Fprint(stdout, out)
 	return ok
+}
+
+// declarations is what show prints for a target with a symbol, or with outline.
+func declarations(t view.Target, outline bool) ([]view.Target, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	n := nav.New(cwd)
+	ts, err := n.Show(t, outline)
+	if cerr := n.Close(); err == nil {
+		err = cerr
+	}
+	return ts, err
 }
 
 func editCmd(args []string, stdout, stderr io.Writer, call *stats.Call) int {

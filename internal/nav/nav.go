@@ -1,6 +1,6 @@
 // Package nav answers where a symbol is declared and where it is used: by a position in a file with an expression
-// from its line, or by a name. The answers come from the provider of the file's language and print as lines with
-// catnip addresses.
+// from its line, or by a name; and which lines of a file show its declarations. The answers come from the provider
+// of the file's language and print as lines with catnip addresses.
 package nav
 
 import (
@@ -29,6 +29,7 @@ type provider interface {
 	Definition(pos agentlsp.Position) ([]agentlsp.Declaration, error)
 	References(pos agentlsp.Position) (agentlsp.References, error)
 	Symbols(name string) ([]agentlsp.Symbol, error)
+	Outline(file string) ([]agentlsp.Symbol, error)
 	Close() error
 }
 
@@ -166,13 +167,7 @@ func (n *Navigator) def(q Question, body bool) (string, error) {
 	}
 	var b strings.Builder
 	for _, d := range decls {
-		from, to := d.Range.Line, d.Range.Line+strings.Count(d.Signature, "\n")
-		if d.Doc != "" {
-			from -= strings.Count(d.Doc, "\n") + 1
-		}
-		if body {
-			to = d.Range.EndLine
-		}
+		from, to := declLines(d, body)
 		lines, err := source(d.File)
 		if err != nil {
 			return "", err
@@ -307,8 +302,8 @@ func (n *Navigator) symbols(name string) (provider, []agentlsp.Symbol, error) {
 
 // at is the position of the question's expression and the provider of its file.
 func (n *Navigator) at(q Question) (provider, agentlsp.Position, error) {
-	if ext := filepath.Ext(q.Path); ext != ".go" {
-		return nil, agentlsp.Position{}, fmt.Errorf("no navigation in %q files, only in Go (.go)", ext)
+	if err := goFile(q.Path); err != nil {
+		return nil, agentlsp.Position{}, err
 	}
 	pos, err := locate(q)
 	if err != nil {
@@ -316,6 +311,49 @@ func (n *Navigator) at(q Question) (provider, agentlsp.Position, error) {
 	}
 	ix, err := n.open(filepath.Dir(pos.File))
 	return ix, pos, err
+}
+
+// Show is what show prints for t, a target with a Symbol, or the whole file with outline: the declarations named
+// t.Symbol in the Go file (Func, Type, Type.Method, Type.Field), each from its doc comment to its end, or the line
+// of each declaration in the file.
+func (n *Navigator) Show(t view.Target, outline bool) ([]view.Target, error) {
+	if err := goFile(t.Path); err != nil {
+		return nil, err
+	}
+	path, err := filepath.Abs(t.Path)
+	if err != nil {
+		return nil, err
+	}
+	ix, err := n.open(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	syms, err := ix.Outline(path)
+	if err != nil {
+		return nil, err
+	}
+	var ts []view.Target
+	for _, s := range syms {
+		switch {
+		case outline && (len(ts) == 0 || ts[len(ts)-1].From != s.Line): // names declared on one line share it
+			ts = append(ts, view.Target{Path: t.Path, From: s.Line, To: s.Line})
+		case !outline && (t.Symbol == s.Name || t.Symbol == s.Container+"."+s.Name):
+			from, to := declLines(s.Declaration, true)
+			ts = append(ts, view.Target{Path: t.Path, From: from, To: to})
+		}
+	}
+	if !outline && len(ts) == 0 {
+		return nil, fmt.Errorf("no symbol %q in %s; catnip show %s --outline lists its declarations", t.Symbol, t.Path, t.Path)
+	}
+	return ts, nil
+}
+
+// goFile fails for a path that is not of a Go file, the only language navigation knows.
+func goFile(path string) error {
+	if ext := filepath.Ext(path); ext != ".go" {
+		return fmt.Errorf("no navigation in %q files: catnip knows Go (.go)", ext)
+	}
+	return nil
 }
 
 // open is the Go provider of the root of dir; a provider of another root is closed first, as a process has one Go
@@ -445,6 +483,18 @@ func source(path string) ([]string, error) {
 // line writes line l of the file at path, given its lines, as <path>:<l>#<hash><mark>: <text>.
 func (n *Navigator) line(b *strings.Builder, path string, lines []string, l int, mark string) {
 	fmt.Fprintf(b, "%s:%d#%s%s: %s\n", n.rel(path), l, edit.Hash(lines[l-1]), mark, lines[l-1])
+}
+
+// declLines is the lines of d: from its doc comment to the end of its signature, with body to its end.
+func declLines(d agentlsp.Declaration, body bool) (from, to int) {
+	from, to = d.Range.Line, d.Range.Line+strings.Count(d.Signature, "\n")
+	if d.Doc != "" {
+		from -= strings.Count(d.Doc, "\n") + 1
+	}
+	if body {
+		to = d.Range.EndLine
+	}
+	return from, to
 }
 
 // rel is path as an answer prints it: relative to the directory of the navigator for a file of the root, otherwise
