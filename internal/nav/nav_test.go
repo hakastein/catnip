@@ -12,6 +12,7 @@ import (
 
 	"github.com/hakastein/catnip/internal/edit"
 	"github.com/hakastein/catnip/internal/nav"
+	"github.com/hakastein/catnip/internal/view"
 )
 
 // shop is a Go module of the tests by file.
@@ -47,6 +48,12 @@ import "example.com/shop/cart"
 
 // Pay charges for c.
 func Pay(c *cart.Cart) {}
+
+func init() {}
+
+func init() {}
+
+var a, b int
 `,
 	"main.go": `package main
 
@@ -137,7 +144,7 @@ func TestDef(t *testing.T) {
 			errs: "main.go:8 Add: \"Add\" stands on line 8 2 times, at columns 4, 16; give the column as main.go:8:<column>: " + line8 + "\n"},
 		{name: "no declaration", args: []string{"Remove"}, out: "Remove\n", errs: "Remove: no declaration found\n"},
 		{name: "not Go", args: []string{"notes.txt:1", "Add"}, out: "notes.txt:1 Add\n",
-			errs: "notes.txt:1 Add: no navigation in \".txt\" files: def knows Go (.go)\n"},
+			errs: "notes.txt:1 Add: no navigation in \".txt\" files: catnip knows Go (.go)\n"},
 	}
 	newShop(t)
 	for _, tt := range tests {
@@ -155,6 +162,40 @@ func TestDef(t *testing.T) {
 			assert.Equal(t, tt.out, out.String())
 			assert.Equal(t, tt.errs, errs.String())
 			assert.Equal(t, tt.answered, answered)
+		})
+	}
+}
+
+func TestShow(t *testing.T) {
+	tests := []struct {
+		name    string
+		target  view.Target
+		outline bool
+		want    []view.Target
+		err     string
+	}{
+		{name: "type and method", target: view.Target{Path: "cart/cart.go", Symbol: "Cart.Add"}, want: []view.Target{{Path: "cart/cart.go", From: 10, To: 14}}},
+		{name: "bare name", target: view.Target{Path: "cart/cart.go", Symbol: "Add"}, want: []view.Target{{Path: "cart/cart.go", From: 10, To: 14}}},
+		{name: "several declarations", target: view.Target{Path: "pay/pay.go", Symbol: "init"},
+			want: []view.Target{{Path: "pay/pay.go", From: 8, To: 8}, {Path: "pay/pay.go", From: 10, To: 10}}},
+		{name: "outline; names of one line once", target: view.Target{Path: "pay/pay.go"}, outline: true, want: []view.Target{
+			{Path: "pay/pay.go", From: 6, To: 6}, {Path: "pay/pay.go", From: 8, To: 8}, {Path: "pay/pay.go", From: 10, To: 10}, {Path: "pay/pay.go", From: 12, To: 12}}},
+		{name: "no symbol", target: view.Target{Path: "cart/cart.go", Symbol: "Remove"},
+			err: `no symbol "Remove" in cart/cart.go; catnip show cart/cart.go --outline lists its declarations`},
+		{name: "not Go", target: view.Target{Path: "notes.txt"}, outline: true, err: `no navigation in ".txt" files: catnip knows Go (.go)`},
+	}
+	newShop(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cwd, err := os.Getwd()
+			require.NoError(t, err)
+			n := nav.New(cwd)
+
+			got, err := n.Show(tt.target, tt.outline)
+
+			require.NoError(t, n.Close())
+			assert.Equal(t, tt.err, errText(err))
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

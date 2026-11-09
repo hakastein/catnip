@@ -1,6 +1,6 @@
 ---
 name: catnip
-description: "Use for every file read or edit, by file tools or shell: cat, sed, head/tail, heredoc, python; and to find where a Go symbol is declared."
+description: "Use for every file read or edit, by file tools or shell: cat, sed, head/tail, heredoc, python; and to find where a Go symbol is declared or read one by name."
 ---
 
 # catnip
@@ -18,10 +18,13 @@ catnip show src/a.php:57                  # a position and 5 lines around it; -C
 catnip show src/a.php:57:12               # a position with a column, as LSP-based tools print it
 catnip show --gutter line src/a.php:40-80 # line numbers only; --gutter none prints only the text
 catnip show --blame src/a.php:57          # commit, author and date of every line
+catnip show cart/cart.go::Cart.Add        # a Go declaration by name, from its doc comment to its end
+catnip show cart/cart.go --outline        # the line of each declaration of a Go file
 ```
 
 A line address `57#a3f0` is the line number and a hash of its content; edits address lines by it. Lines and columns
-start at 1. A range past the end of the file is an error that names the real line count.
+start at 1. A range past the end of the file is an error that names the real line count. In a Go file, read a function
+by its name with `::` rather than by guessing its lines, and look at `--outline` before reading the whole file.
 
 ## Edit
 

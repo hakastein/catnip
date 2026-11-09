@@ -49,6 +49,8 @@ func TestRun(t *testing.T) {
 		{name: "written, check failed", project: `{"*.txt": {"check": {"no": "false"}}}`, before: "a\n", args: []string{"write", "p/a.txt"}, stdin: "w\n", code: checkFailed, after: "w\n"},
 		{name: "show past the end", project: `{}`, before: "a\n", args: []string{"show", "p/a.txt:5"}, code: notApplied, after: "a\n"},
 		{name: "show prints line addresses", project: `{}`, before: "a\n", args: []string{"show", "p/a.txt"}, code: ok, after: "a\n", tail: "1#" + edit.Hash("a") + "\ta\n"},
+		{name: "show a symbol outside Go code", project: `{}`, before: "a\n", args: []string{"show", "p/a.txt::a"}, code: notApplied, after: "a\n"},
+		{name: "show --outline of a range", project: `{}`, before: "a\n", args: []string{"show", "--outline", "p/a.txt:1-1"}, code: badUsage, after: "a\n"},
 		{name: "show with an unknown gutter", project: `{}`, before: "a\n", args: []string{"show", "--gutter", "hashes", "p/a.txt"}, code: badUsage, after: "a\n"},
 		{name: "insert after a line", project: `{}`, before: "a\n", args: []string{"edit", "p/a.txt", "--after", "1#" + edit.Hash("a"), "b"}, code: ok, after: "a\nb\n"},
 		{name: "insert at a changed line: nothing applied", project: `{}`, before: "a\n", args: []string{"edit", "p/a.txt", "--before", "1#" + edit.Hash("x"), "b"}, code: notApplied, after: "a\n"},

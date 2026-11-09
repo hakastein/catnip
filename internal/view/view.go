@@ -15,20 +15,27 @@ import (
 	"github.com/hakastein/catnip/internal/edit"
 )
 
-// Target is what to show: the whole file, lines From..To, or the lines around Line.
+// Target is what to show: the whole file, lines From..To, the lines around Line, or the declarations of Symbol.
 type Target struct {
 	Path     string
 	From, To int    // 0, 0 for the whole file
 	Line     int    // the asked position; 0 for a range
 	Column   int    // the column of the asked position; 0 without one
 	Hash     string // the hash Line must have, from an address <line>#<hash>; "" without one
+	Symbol   string // the name of a declaration in the file, from <path>::<symbol>; "" without one
 }
 
 var suffix = regexp.MustCompile(`^(.+?):(\d+)(?:-(\d+)|:(\d+)|(#.*))?$`)
 
 // ParseTarget reads path, path:from-to, path:line, path:line:column (1-based, as positions in LSP tools print them)
-// or path:line#hash, the address catnip prints. A position shows context lines on each side.
+// path:line#hash, the address catnip prints, or path::symbol. A position shows context lines on each side.
 func ParseTarget(s string, context int) (Target, error) {
+	if path, symbol, found := strings.Cut(s, "::"); found {
+		if symbol == "" {
+			return Target{}, fmt.Errorf("%s: want a symbol after ::", s)
+		}
+		return Target{Path: path, Symbol: symbol}, nil
+	}
 	m := suffix.FindStringSubmatch(s)
 	if m == nil {
 		return Target{Path: s}, nil
