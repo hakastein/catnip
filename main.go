@@ -193,7 +193,8 @@ flags:
   --show-fix-diff  also print what each fixer changed
 
 exit: 0 written, checks passed; 1 nothing written: the line changed, the expression is not on
-  it, no symbol, the new name conflicts, the symbol is declared outside the project, a package;
+  it, no symbol, the new name conflicts, the symbol is declared outside the project, the old
+  name stands in a file no platform builds, a package;
   2 bad arguments or config; 3 written, but a write, fixer or check failed: stderr ends with
   the files written
 `

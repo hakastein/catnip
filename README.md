@@ -76,21 +76,21 @@ Windows — из Git for Windows в `PATH`.
 типам библиотекой [agent-lsp](https://github.com/hakastein/agent-lsp), без сервера и демона.
 
 ```bash
-catnip def main.go:288 view.ParseTarget    # позиция и выражение со строки
-catnip def main.go:288#f032 ParseTarget    # адрес строки из show; строка не должна была измениться
-catnip def main.go:287:52 call.Flags       # колонка (в байтах с 1) выбирает одно из одинаковых выражений
+catnip def main.go:312 view.ParseTarget    # позиция и выражение со строки
+catnip def main.go:312#f032 ParseTarget    # адрес строки из show; строка не должна была измениться
+catnip def main.go:311:52 call.Flags       # колонка (в байтах с 1) выбирает одно из одинаковых выражений
 catnip def view.Target Navigator.Close     # имена: Func, Type.Method, pkg.Func, pkg.Type.Method
 catnip def --body Navigator.Def            # объявление целиком
 ```
 
 ```
-main.go:288 view.ParseTarget
+main.go:312 view.ParseTarget
 internal/view/view.go:31#3f2c: // ParseTarget reads path, path:from-to, path:line, path:line:column (1-based, as positions in LSP tools print them)
 internal/view/view.go:32#0f38: // path:line#hash, the address catnip prints, or path::symbol. A position shows context lines on each side. The symbol
 internal/view/view.go:33#d814: // is Name or Type.Name of Go identifiers after the last ::; otherwise :: is part of the path.
 internal/view/view.go:34#874a: func ParseTarget(s string, context int) (Target, error) {
 
-main.go:299 fmt.Fprintln
+main.go:323 fmt.Fprintln
 /usr/local/go/src/fmt/print.go:300#2e33: // Fprintln formats using the default formats for its operands and writes to w.
 /usr/local/go/src/fmt/print.go:301#d404: // Spaces are always added between operands and a newline is appended.
 /usr/local/go/src/fmt/print.go:302#a23d: // It returns the number of bytes written and any write error encountered.
@@ -120,21 +120,21 @@ main.go:299 fmt.Fprintln
 задаётся одним из них.
 
 ```bash
-catnip ref main.go:288 view.ParseTarget          # использования
-catnip ref internal/nav/nav.go:29 Definition     # метод интерфейса: использования и реализации
+catnip ref main.go:312 view.ParseTarget          # использования
+catnip ref internal/nav/nav.go:33 Definition     # метод интерфейса: использования и реализации
 catnip ref internal/view/view.go:34#874a ParseTarget  # адрес из ответа def
 catnip ref --limit 3 edit.Hash                   # не больше 3 строк
 ```
 
 ```
-internal/nav/nav.go:29 Definition
-internal/nav/nav.go:161#d36b: 		if decls, err = ix.Definition(pos); err != nil {
+internal/nav/nav.go:33 Definition
+internal/nav/nav.go:166#d36b: 		if decls, err = ix.Definition(pos); err != nil {
 implementations:
-/home/u/go/pkg/mod/github.com/hakastein/agent-lsp@v0.6.0/golang/golang.go:243#f93a: func (ix *Index) Definition(pos agentlsp.Position) ([]agentlsp.Declaration, error) {
+/home/u/go/pkg/mod/github.com/hakastein/agent-lsp@v0.7.0/golang/golang.go:247#f93a: func (ix *Index) Definition(pos agentlsp.Position) ([]agentlsp.Declaration, error) {
 
 edit.Hash
 internal/edit/apply_test.go:12#4d83: 	return &edit.LineRange{From: from, To: to, FromHash: edit.Hash(fromLine), ToHash: edit.Hash(toLine)}
-internal/nav/nav_test.go:124#ae97: 	return fmt.Sprintf("%s:%d#%s: %s\n", filepath.FromSlash(path), n, edit.Hash(text), text)
+internal/nav/nav_test.go:129#ae97: 	return fmt.Sprintf("%s:%d#%s: %s\n", filepath.FromSlash(path), n, edit.Hash(text), text)
 internal/view/view_test.go:62#76bf: 		{name: "line addresses", target: view.Target{Path: "f", From: 1, To: 2}, gutter: "hash", want: "1#" + edit.Hash("a") + "\ta\n2#" + edit.Hash("b") + "\tb\n"},
 21 more lines in 7 files
 ```
@@ -160,15 +160,15 @@ catnip show main.go --outline                    # строка каждого �
 
 ```
 $ catnip show internal/nav/nav.go::Close
-34#516c		Close() error
+39#516c		Close() error
 
-102#75d1	// Close closes the open provider.
-103#5fd6	func (n *Navigator) Close() error {
-104#53ca		if n.ix == nil {
-105#c0de			return nil
-106#1493		}
-107#7263		return n.ix.Close()
-108#b0a4	}
+107#75d1	// Close closes the open provider.
+108#5fd6	func (n *Navigator) Close() error {
+109#53ca		if n.ix == nil {
+110#c0de			return nil
+111#1493		}
+112#7263		return n.ix.Close()
+113#b0a4	}
 ```
 
 - `<путь>::<символ>` печатает каждое объявление файла с этим именем (`Func`, `Type`, `Type.Method`, `Type.Field`;
@@ -203,18 +203,18 @@ internal/store/mode_windows.go:8
 +	func hardLinks(fs.FileInfo) uint64 { return 1 }
 gofmt: passed
 internal/store/store.go:35
--		if links(info) > 1 { // a rename would detach the other names of the file from the new content
-+		if hardLinks(info) > 1 { // a rename would detach the other names of the file from the new content
+-			if links(info) > 1 { // a rename would detach the other names of the file from the new content
++			if hardLinks(info) > 1 { // a rename would detach the other names of the file from the new content
 gofmt: passed
 ```
 
-- Правки дают пакеты корня под linux, darwin и windows, так что `*_windows.go` переименовывается и на Linux; файлы,
-  которые не собирает ни одна из трёх платформ, не правятся. Метод интерфейса переименовывается вместе с методами
+- Правки дают пакеты корня под linux, darwin и windows, так что `*_windows.go` переименовывается и на Linux. Метод интерфейса переименовывается вместе с методами
   типов, которые код приводит к интерфейсу. Слово в докблоке объявления, совпадающее со старым именем, тоже меняется.
 - До записи catnip проверяет все правки: каждая заменяет старое имя в файле, каков он сейчас, и конфиг каждого файла
   читается. Отказ провайдера — новое имя конфликтует с другим символом, символ объявлен вне проекта (стандартная
   библиотека, зависимость, `vendor/`), метод придётся переименовать у типа из пакета, который не импортирует пакет
-  объявления, метод `String`, `Error` или `Format`, который находит `fmt`, пакет или имя импорта — код 1, причина с
+  объявления, метод `String`, `Error` или `Format`, который находит `fmt`, старое имя стоит в файле, который не собирает ни
+  одна из трёх платформ (`//go:build integration`, программа `//go:build ignore`), пакет или имя импорта — код 1, причина с
   местом в stderr, ничего не записано.
 - Каждый файл пишется целиком и атомарно, как у `edit`, с его BOM и окончаниями строк. Затем по каждому файлу по
   порядку — его изменённые строки и фиксеры и проверки из конфига, как после `edit`; `--show-fix-diff` показывает
