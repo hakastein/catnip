@@ -69,7 +69,8 @@ func newShop(t *testing.T) string {
 	for _, name := range []string{"HOME", "XDG_CACHE_HOME", "LOCALAPPDATA"} {
 		t.Setenv(name, cache)
 	}
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir()) // the go command refuses a Windows short name such as RUNNER~1
+	require.NoError(t, err)
 	for name, text := range shop {
 		path := filepath.Join(dir, filepath.FromSlash(name))
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
