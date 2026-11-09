@@ -3,7 +3,7 @@ module github.com/hakastein/catnip
 go 1.26.0
 
 require (
-	github.com/hakastein/agent-lsp v0.5.1
+	github.com/hakastein/agent-lsp v0.6.1
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/stretchr/testify v1.12.1
 	modernc.org/sqlite v1.61.1

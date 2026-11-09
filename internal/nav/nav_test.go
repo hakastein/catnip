@@ -40,8 +40,30 @@ func Total(
 	return 0
 }
 `,
-	"go.work":    "go 1.26\n\nuse (\n\t.\n\t./pay\n)\n",
-	"pay/go.mod": "module example.com/pay\n\ngo 1.26\n",
+	"cart/store.go": `package cart
+
+// Store keeps carts.
+type Store interface {
+	Save(c *Cart) error
+}
+
+type mem struct{}
+
+func (mem) Save(c *Cart) error { return nil }
+
+type disk struct{}
+
+func (disk) Save(c *Cart) error { return nil }
+
+func keep(s Store, c *Cart) error {
+	c.Add("x"); c.Add("y"); c.Add("z"); c.Add("w")
+	return s.Save(c)
+}
+`,
+	"go.work":       "go 1.26\n\nuse (\n\t.\n\t./pay\n\t../ext\n)\n",
+	"../ext/go.mod": "module example.com/ext\n\ngo 1.26\n",
+	"../ext/ext.go": "package ext\n\nfunc Hello() {}\n\nfunc Again() { Hello() }\n",
+	"pay/go.mod":    "module example.com/pay\n\ngo 1.26\n",
 	"pay/pay.go": `package pay
 
 import "example.com/shop/cart"
@@ -66,6 +88,16 @@ func main() {
 }
 `,
 	"notes.txt": "Add\n",
+	// a module with a vendor directory beside the root
+	"../vend/go.mod":                        "module example.com/vend\n\ngo 1.26\n\nrequire example.com/dep v1.0.0\n",
+	"../vend/vendor/modules.txt":            "# example.com/dep v1.0.0\n## explicit; go 1.26\nexample.com/dep\n",
+	"../vend/vendor/example.com/dep/dep.go": "package dep\n\n// Helper helps.\nfunc Helper() int { return 1 }\n",
+	"../vend/main.go":                       "package main\n\nimport \"example.com/dep\"\n\nfunc main() { dep.Helper() }\n",
+	// a module that a replace takes from a directory beside it
+	"../rep/go.mod":  "module example.com/rep\n\ngo 1.26\n\nrequire example.com/far v1.0.0\n\nreplace example.com/far => ../far\n",
+	"../rep/main.go": "package main\n\nimport \"example.com/far\"\n\nfunc main() { far.Away() }\n",
+	"../far/go.mod":  "module example.com/far\n\ngo 1.26\n",
+	"../far/far.go":  "package far\n\nfunc Away() {}\n",
 }
 
 // newShop writes shop into a fresh directory, makes it the current one and gives the rest of the test a fresh user
@@ -106,6 +138,7 @@ var (
 )
 
 func TestDef(t *testing.T) {
+	dir := newShop(t)
 	tests := []struct {
 		name     string
 		args     []string
@@ -127,6 +160,11 @@ func TestDef(t *testing.T) {
 		{name: "multi-line signature", args: []string{"Total"}, out: "Total\n" + at("cart/cart.go", 16, "// Total sums the prices.") +
 			at("cart/cart.go", 17, "func Total(") + at("cart/cart.go", 18, "\tprices ...int,") + at("cart/cart.go", 19, ") int {"), answered: true},
 		{name: "go.work above the nearest go.mod", args: []string{"pay/pay.go:6", "cart.Cart"}, out: "pay/pay.go:6 cart.Cart\n" + cartDecl, answered: true},
+		{name: "vendor directory of another root", args: []string{"../vend/main.go:5", "dep.Helper"}, out: "../vend/main.go:5 dep.Helper\n" +
+			at("../vend/vendor/example.com/dep/dep.go", 3, "// Helper helps.") +
+			at("../vend/vendor/example.com/dep/dep.go", 4, "func Helper() int { return 1 }"), answered: true},
+		{name: "replaced module of another root", args: []string{"../rep/main.go:5", "far.Away"}, out: "../rep/main.go:5 far.Away\n" +
+			at(filepath.Join(filepath.Dir(dir), "far", "far.go"), 3, "func Away() {}"), answered: true},
 		{name: "body", args: []string{"Add"}, body: true, out: "Add\n" + addBody, answered: true},
 		{name: "several questions", args: []string{"Cart", "Add"}, out: "Cart\n" + cartDecl + "\nAdd\n" + addDecl, answered: true},
 		{name: "changed line", args: []string{"main.go:7#0000", "Add"}, out: "main.go:7#0000 Add\n",
@@ -146,10 +184,9 @@ func TestDef(t *testing.T) {
 		{name: "not Go", args: []string{"notes.txt:1", "Add"}, out: "notes.txt:1 Add\n",
 			errs: "notes.txt:1 Add: no navigation in \".txt\" files: catnip knows Go (.go)\n"},
 	}
-	newShop(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			qs, err := nav.Parse(tt.args)
+			qs, err := nav.Parse("def", tt.args)
 			require.NoError(t, err)
 			cwd, err := os.Getwd()
 			require.NoError(t, err)
@@ -202,7 +239,7 @@ func TestShow(t *testing.T) {
 
 func TestDefStandardLibrary(t *testing.T) {
 	newShop(t)
-	qs, err := nav.Parse([]string{"cart/cart.go:13", "strings.TrimSpace"})
+	qs, err := nav.Parse("def", []string{"cart/cart.go:13", "strings.TrimSpace"})
 	require.NoError(t, err)
 	cwd, err := os.Getwd()
 	require.NoError(t, err)
@@ -213,7 +250,63 @@ func TestDefStandardLibrary(t *testing.T) {
 
 	require.NoError(t, n.Close())
 	assert.True(t, answered, errs.String())
-	assert.Regexp(t, `^cart/cart.go:13 strings.TrimSpace\n.+[/\\]src[/\\]strings[/\\]strings\.go:\d+#[0-9a-f]{4}: // TrimSpace `, out.String())
+	assert.Regexp(t, `^cart/cart.go:13 strings.TrimSpace\n(/|[A-Z]:\\).+[/\\]src[/\\]strings[/\\]strings\.go:\d+#[0-9a-f]{4}: // TrimSpace `, out.String())
+}
+
+var (
+	saveUses = at("cart/store.go", 18, "\treturn s.Save(c)")
+	saveImpl = at("cart/store.go", 10, "func (mem) Save(c *Cart) error { return nil }")
+	diskImpl = at("cart/store.go", 14, "func (disk) Save(c *Cart) error { return nil }")
+	addUse7  = at("main.go", 7, "\tc.Add(\"a\")")
+	addUse8  = at("main.go", 8, "\tc.Add(\"b\"); c.Add(\"c\")")                                    // two places, one line
+	addUse17 = at("cart/store.go", 17, "\tc.Add(\"x\"); c.Add(\"y\"); c.Add(\"z\"); c.Add(\"w\")") // more places than main.go, fewer lines
+)
+
+func TestRef(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		limit    int
+		out      string
+		errs     string
+		answered bool
+	}{
+		{name: "uses by file, most lines first", args: []string{"main.go:7", "c.Add"}, limit: 60,
+			out: "main.go:7 c.Add\n" + addUse7 + addUse8 + addUse17, answered: true},
+		{name: "limit gives a line to each file first", args: []string{"main.go:7", "c.Add"}, limit: 2,
+			out: "main.go:7 c.Add\n" + addUse7 + addUse17 + "1 more lines in 1 files\n", answered: true},
+		{name: "limit below the files", args: []string{"main.go:7", "c.Add"}, limit: 1,
+			out: "main.go:7 c.Add\n" + addUse7 + "2 more lines in 2 files\n", answered: true},
+		{name: "implementations", args: []string{"cart/store.go:5", "Save"}, limit: 60,
+			out: "cart/store.go:5 Save\n" + saveUses + "implementations:\n" + saveImpl + diskImpl, answered: true},
+		{name: "limit gives a line to each group first", args: []string{"Store.Save"}, limit: 2,
+			out: "Store.Save\n" + saveUses + "implementations:\n" + saveImpl + "1 more lines in 1 files\n", answered: true},
+		{name: "a name of several declarations; the other questions answered", args: []string{"Save", "Store.Save"}, limit: 60,
+			out: "Save\n\nStore.Save\n" + saveUses + "implementations:\n" + saveImpl + diskImpl,
+			errs: "Save: 3 declarations; ask about one of them by its address:\n" + at("cart/store.go", 5, "\tSave(c *Cart) error") +
+				saveImpl + diskImpl},
+		{name: "no uses", args: []string{"Total"}, limit: 60, out: "Total\n", errs: "Total: no uses found\n"},
+		{name: "a module of go.work outside its directory is of the project", args: []string{"Hello"}, limit: 60,
+			out: "Hello\n" + at("../ext/ext.go", 5, "func Again() { Hello() }"), answered: true},
+	}
+	newShop(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			qs, err := nav.Parse("ref", tt.args)
+			require.NoError(t, err)
+			cwd, err := os.Getwd()
+			require.NoError(t, err)
+			n := nav.New(cwd)
+			var out, errs bytes.Buffer
+
+			answered := n.Ref(qs, tt.limit, &out, &errs)
+
+			require.NoError(t, n.Close())
+			assert.Equal(t, tt.out, out.String())
+			assert.Equal(t, tt.errs, errs.String())
+			assert.Equal(t, tt.answered, answered)
+		})
+	}
 }
 
 // errText is the text of err, "" for none.
@@ -237,7 +330,7 @@ func TestParse(t *testing.T) {
 			{Text: "pkg.Func", Name: "pkg.Func"},
 		}},
 		{args: []string{"Cart::add"}, want: []nav.Question{{Text: "Cart::add", Name: "Cart::add"}}},
-		{args: []string{}, err: "def needs a position and an expression, or a name"},
+		{args: []string{}, err: "ref needs a position and an expression, or a name"},
 		{args: []string{"a.go:3"}, err: "a.go:3: want an expression from the line after the position"},
 		{args: []string{"a.go:3", "()"}, err: `a.go:3 "()": the expression has no name`},
 		{args: []string{"a.go:3#zz", "Write"}, err: `a.go:3#zz: "3#zz" is not LINE#HASH as catnip show prints it`},
@@ -247,7 +340,7 @@ func TestParse(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprint(tt.args), func(t *testing.T) {
-			got, err := nav.Parse(tt.args)
+			got, err := nav.Parse("ref", tt.args)
 			assert.Equal(t, tt.err, errText(err))
 			assert.Equal(t, tt.want, got)
 		})

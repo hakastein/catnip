@@ -7,8 +7,9 @@ CLI для агентов: просмотр и правка файлов, сце
 позиции с адресом каждой строки — номером и хешем; `catnip edit` применяет к файлу несколько точных замен и вставок
 по адресам строк разом и сначала проверяет все, так что несошедшаяся правка не записывает ничего; `catnip write`
 создаёт файл из stdin. После записи catnip запускает фиксеры и проверки из конфига и сообщает результат кодом
-выхода. `catnip def` отвечает, где объявлен Go-символ, строками с теми же адресами; `catnip show <путь>::<символ>`
-печатает объявление Go-символа файла, `catnip show <путь> --outline` — строки объявлений файла.
+выхода. `catnip def` отвечает, где объявлен Go-символ, `catnip ref` — где он используется и кто его реализует,
+строками с теми же адресами; `catnip show <путь>::<символ>` печатает объявление Go-символа файла,
+`catnip show <путь> --outline` — строки объявлений файла.
 
 Как агенту пользоваться командами — [`skills/catnip/SKILL.md`](skills/catnip/SKILL.md). `catnip help` даёт
 синтаксис каждой команды и все правки `edit`, `catnip <команда> --help` или `catnip help <команда>` — все флаги одной
@@ -74,20 +75,21 @@ Windows — из Git for Windows в `PATH`.
 типам библиотекой [agent-lsp](https://github.com/hakastein/agent-lsp), без сервера и демона.
 
 ```bash
-catnip def main.go:237 view.ParseTarget    # позиция и выражение со строки
-catnip def main.go:237#f032 ParseTarget    # адрес строки из show; строка не должна была измениться
-catnip def main.go:236:53 call.Flags       # колонка (в байтах с 1) выбирает одно из одинаковых выражений
+catnip def main.go:288 view.ParseTarget    # позиция и выражение со строки
+catnip def main.go:288#f032 ParseTarget    # адрес строки из show; строка не должна была измениться
+catnip def main.go:287:52 call.Flags       # колонка (в байтах с 1) выбирает одно из одинаковых выражений
 catnip def view.Target Navigator.Close     # имена: Func, Type.Method, pkg.Func, pkg.Type.Method
 catnip def --body Navigator.Def            # объявление целиком
 ```
 
 ```
-main.go:237 view.ParseTarget
-internal/view/view.go:29#3f2c: // ParseTarget reads path, path:from-to, path:line, path:line:column (1-based, as positions in LSP tools print them)
-internal/view/view.go:30#4a4d: // or path:line#hash, the address catnip prints. A position shows context lines on each side.
-internal/view/view.go:31#874a: func ParseTarget(s string, context int) (Target, error) {
+main.go:288 view.ParseTarget
+internal/view/view.go:31#3f2c: // ParseTarget reads path, path:from-to, path:line, path:line:column (1-based, as positions in LSP tools print them)
+internal/view/view.go:32#0f38: // path:line#hash, the address catnip prints, or path::symbol. A position shows context lines on each side. The symbol
+internal/view/view.go:33#d814: // is Name or Type.Name of Go identifiers after the last ::; otherwise :: is part of the path.
+internal/view/view.go:34#874a: func ParseTarget(s string, context int) (Target, error) {
 
-main.go:244 fmt.Fprintln
+main.go:299 fmt.Fprintln
 /usr/local/go/src/fmt/print.go:300#2e33: // Fprintln formats using the default formats for its operands and writes to w.
 /usr/local/go/src/fmt/print.go:301#d404: // Spaces are always added between operands and a newline is appended.
 /usr/local/go/src/fmt/print.go:302#a23d: // It returns the number of bytes written and any write error encountered.
@@ -107,9 +109,44 @@ main.go:244 fmt.Fprintln
 - Вопрос без ответа (строка изменилась, выражения на ней нет или оно стоит там несколько раз, объявления нет)
   оставляет строку вопроса, причину с текущей строкой печатает в stderr, остальные вопросы вызова отвечены; код
   выхода — 1.
-- Корень Go — ближайший вверх от файла каталог с `go.work`, иначе с `go.mod`; для имени — от текущего каталога. Кэш
+- Корень Go — ближайший вверх от файла каталог с `go.work`, иначе с `go.mod`; для имени — от текущего каталога. Проект —
+  корень и модули его `go.work`, в том числе вне каталога корня (`use ../ext`). Кэш
   индекса — `agent-lsp/cache.sqlite` в каталоге кэша пользователя: первый вызов в модуле загружает пакеты, следующие
   берут их из кэша.
+
+`catnip ref` печатает использования символа Go и, отдельной группой, реализации интерфейса или его метода. Вопросы —
+те же, что у `def`, но имя должно называть одно объявление: на несколько catnip печатает в stderr их адреса, и вопрос
+задаётся одним из них.
+
+```bash
+catnip ref main.go:288 view.ParseTarget          # использования
+catnip ref internal/nav/nav.go:29 Definition     # метод интерфейса: использования и реализации
+catnip ref internal/view/view.go:34#874a ParseTarget  # адрес из ответа def
+catnip ref --limit 3 edit.Hash                   # не больше 3 строк
+```
+
+```
+internal/nav/nav.go:29 Definition
+internal/nav/nav.go:161#d36b: 		if decls, err = ix.Definition(pos); err != nil {
+implementations:
+/home/u/go/pkg/mod/github.com/hakastein/agent-lsp@v0.6.0/golang/golang.go:243#f93a: func (ix *Index) Definition(pos agentlsp.Position) ([]agentlsp.Declaration, error) {
+
+edit.Hash
+internal/edit/apply_test.go:12#4d83: 	return &edit.LineRange{From: from, To: to, FromHash: edit.Hash(fromLine), ToHash: edit.Hash(toLine)}
+internal/nav/nav_test.go:124#ae97: 	return fmt.Sprintf("%s:%d#%s: %s\n", filepath.FromSlash(path), n, edit.Hash(text), text)
+internal/view/view_test.go:62#76bf: 		{name: "line addresses", target: view.Target{Path: "f", From: 1, To: 2}, gutter: "hash", want: "1#" + edit.Hash("a") + "\ta\n2#" + edit.Hash("b") + "\tb\n"},
+21 more lines in 7 files
+```
+
+- Ответ — блок на вопрос: строка вопроса, использования, затем после строки `implementations:` реализации. Каждая
+  группа — по файлам, файлы по убыванию числа строк, внутри файла — по строкам. Несколько мест на одной строке — одна
+  строка.
+- `--limit` — сколько строк печатать, по умолчанию 60: сначала по строке на каждый файл (использований, потом
+  реализаций), затем остальные по порядку. Группа, у которой строки не поместились, кончается строкой
+  `<n> more lines in <m> files`.
+- Использования ищутся во всех пакетах корня под linux, darwin и windows, так что `*_windows.go` попадает в ответ и
+  на Linux. Объявление само себе не использование; символ без использований — вопрос без ответа (`no uses found`),
+  код 1.
 
 `catnip show` открывает объявление Go-файла по имени и показывает объявления файла строками `show` с адресами
 `N#hash`, которые берёт `edit`; `--gutter` и `--blame` работают как для файла.
@@ -122,15 +159,15 @@ catnip show main.go --outline                    # строка каждого �
 
 ```
 $ catnip show internal/nav/nav.go::Close
-30#516c		Close() error
+34#516c		Close() error
 
- 98#75d1	// Close closes the open provider.
- 99#5fd6	func (n *Navigator) Close() error {
-100#53ca		if n.ix == nil {
-101#c0de			return nil
-102#1493		}
-103#7263		return n.ix.Close()
-104#b0a4	}
+102#75d1	// Close closes the open provider.
+103#5fd6	func (n *Navigator) Close() error {
+104#53ca		if n.ix == nil {
+105#c0de			return nil
+106#1493		}
+107#7263		return n.ix.Close()
+108#b0a4	}
 ```
 
 - `<путь>::<символ>` печатает каждое объявление файла с этим именем (`Func`, `Type`, `Type.Method`, `Type.Field`;
@@ -144,8 +181,8 @@ $ catnip show internal/nav/nav.go::Close
 
 | Код | Значение |
 |---|---|
-| 0 | записано, проверки прошли; `def`: каждый вопрос отвечен |
-| 1 | ничего не записано: правка не сошлась, файла нет, ошибка ввода-вывода; `def`: на вопрос нет ответа; `show`: объявления `<символ>` нет, файл не Go |
+| 0 | записано, проверки прошли; `def`, `ref`: каждый вопрос отвечен |
+| 1 | ничего не записано: правка не сошлась, файла нет, ошибка ввода-вывода; `def`, `ref`: на вопрос нет ответа; `show`: объявления `<символ>` нет, файл не Go |
 | 2 | ошибка аргументов или конфига |
 | 3 | записано, но проверка или фиксер упали, либо файл записан не целиком |
 

@@ -1,6 +1,6 @@
 ---
 name: catnip
-description: "Use for every file read or edit, by file tools or shell: cat, sed, head/tail, heredoc, python; and to find where a Go symbol is declared or read one by name."
+description: "Use for every file read or edit, by file tools or shell: cat, sed, head/tail, heredoc, python; to find where a Go symbol is declared, used or implemented, or read one by name."
 ---
 
 # catnip
@@ -84,11 +84,24 @@ catnip def --body Store.Write                       # the whole declaration
 Pass a line address of the answer to `show` as is (`catnip show internal/cart/store.go:12#9c41`); `edit` takes
 the path and `12#9c41` apart.
 
+## Find uses and implementations (Go)
+
+Instead of grepping for a name, ask who uses a symbol and who implements an interface or its method. The questions
+are those of `def`; a name must name one declaration, otherwise the error lists their addresses to ask by.
+
+```bash
+catnip ref internal/cart/cart.go:57 s.store.Write   # uses, then "implementations:" for an interface method
+catnip ref --limit 200 Store.Write                  # more than the default 60 lines
+```
+
+Files with most lines come first; several places on a line print as one line. When the answer ends with
+`<n> more lines in <m> files`, raise `--limit`.
+
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | written, checks passed |
-| 1 | nothing written; `def`: a question has no answer |
+| 1 | nothing written; `def`, `ref`: a question has no answer |
 | 2 | bad arguments or config |
 | 3 | written, but a check failed or the file was written in part |

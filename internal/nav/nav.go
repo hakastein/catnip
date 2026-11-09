@@ -1,15 +1,17 @@
-// Package nav answers where a symbol is declared: by a position in a file with an expression from its line, or by
-// a name; and which lines of a file show its declarations. The answers come from the provider of the file's language
-// and print as lines with catnip addresses.
+// Package nav answers where a symbol is declared and where it is used: by a position in a file with an expression
+// from its line, or by a name; and which lines of a file show its declarations. The answers come from the provider
+// of the file's language and print as lines with catnip addresses.
 package nav
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -25,12 +27,14 @@ import (
 // provider answers questions about the code of one root.
 type provider interface {
 	Definition(pos agentlsp.Position) ([]agentlsp.Declaration, error)
+	References(pos agentlsp.Position) (agentlsp.References, error)
 	Symbols(name string) ([]agentlsp.Symbol, error)
 	Outline(file string) ([]agentlsp.Symbol, error)
+	Origin(path string) agentlsp.Origin
 	Close() error
 }
 
-// Question is one question of def: a position with an expression from its line, or a Name.
+// Question is one question of def or ref: a position with an expression from its line, or a Name.
 type Question struct {
 	Text   string // the question as given
 	Path   string
@@ -42,8 +46,8 @@ type Question struct {
 }
 
 // Parse reads questions: pairs <position> <expression>, where the position is <path>:<line>, <path>:<line>:<column>
-// or <path>:<line>#<hash>, and names, which are the arguments that are not a position.
-func Parse(args []string) ([]Question, error) {
+// or <path>:<line>#<hash>, and names, which are the arguments that are not a position. cmd is the command that asks.
+func Parse(cmd string, args []string) ([]Question, error) {
 	var qs []Question
 	for i := 0; i < len(args); i++ {
 		q, err := position(args[i])
@@ -68,7 +72,7 @@ func Parse(args []string) ([]Question, error) {
 		qs = append(qs, q)
 	}
 	if len(qs) == 0 {
-		return nil, errors.New("def needs a position and an expression, or a name")
+		return nil, fmt.Errorf("%s needs a position and an expression, or a name", cmd)
 	}
 	return qs, nil
 }
@@ -108,13 +112,27 @@ func (n *Navigator) Close() error {
 // separated by an empty line. A question without an answer keeps its line, and the reason goes to errw. Def reports
 // whether every question was answered.
 func (n *Navigator) Def(qs []Question, body bool, out, errw io.Writer) bool {
+	return n.answer(qs, out, errw, func(q Question) (string, error) { return n.def(q, body) })
+}
+
+// Ref answers the questions in blocks, as Def does. The lines of an answer are the uses of the symbol, then after
+// the line "implementations:" the types and methods that implement it. Each group goes by file, the files with most
+// lines first; places on one line print as one line. At most limit lines print: first a line of each file, then
+// the rest in order; a group with lines left out ends with the line "<n> more lines in <m> files".
+func (n *Navigator) Ref(qs []Question, limit int, out, errw io.Writer) bool {
+	return n.answer(qs, out, errw, func(q Question) (string, error) { return n.ref(q, limit) })
+}
+
+// answer prints the block of each question with the lines from answer, or keeps its line and prints the reason to
+// errw; it reports whether every question was answered.
+func (n *Navigator) answer(qs []Question, out, errw io.Writer, answer func(Question) (string, error)) bool {
 	answered := true
 	for i, q := range qs {
 		if i > 0 {
 			fmt.Fprintln(out)
 		}
 		fmt.Fprintln(out, q.Text)
-		text, err := n.def(q, body)
+		text, err := answer(q)
 		if err != nil {
 			fmt.Fprintf(errw, "%s: %v\n", q.Text, err)
 			answered = false
@@ -128,11 +146,7 @@ func (n *Navigator) Def(qs []Question, body bool, out, errw io.Writer) bool {
 func (n *Navigator) def(q Question, body bool) (string, error) {
 	var decls []agentlsp.Declaration
 	if q.Name != "" {
-		ix, err := n.open(n.cwd) // shortcut: names are looked up in Go code only; PHP adds a way to choose
-		if err != nil {
-			return "", err
-		}
-		syms, err := ix.Symbols(q.Name)
+		_, syms, err := n.symbols(q.Name)
 		if err != nil {
 			return "", err
 		}
@@ -140,14 +154,7 @@ func (n *Navigator) def(q Question, body bool) (string, error) {
 			decls = append(decls, s.Declaration)
 		}
 	} else {
-		if err := goFile(q.Path); err != nil {
-			return "", err
-		}
-		pos, err := locate(q)
-		if err != nil {
-			return "", err
-		}
-		ix, err := n.open(filepath.Dir(pos.File))
+		ix, pos, err := n.at(q)
 		if err != nil {
 			return "", err
 		}
@@ -160,11 +167,147 @@ func (n *Navigator) def(q Question, body bool) (string, error) {
 	}
 	var b strings.Builder
 	for _, d := range decls {
-		if err := n.render(&b, d, body); err != nil {
+		from, to := declLines(d, body)
+		lines, err := source(d.File)
+		if err != nil {
 			return "", err
+		}
+		for l := from; l <= to; l++ {
+			n.line(&b, d.File, lines, l)
 		}
 	}
 	return b.String(), nil
+}
+
+func (n *Navigator) ref(q Question, limit int) (string, error) {
+	var ix provider
+	var pos agentlsp.Position
+	var err error
+	if q.Name != "" {
+		var syms []agentlsp.Symbol
+		if ix, syms, err = n.symbols(q.Name); err != nil {
+			return "", err
+		}
+		switch {
+		case len(syms) == 0:
+			return "", errors.New("no declaration found")
+		case len(syms) > 1: // the uses of several symbols in one answer would not say whose they are
+			var b strings.Builder
+			fmt.Fprintf(&b, "%d declarations; ask about one of them by its address:\n", len(syms))
+			for _, s := range syms {
+				lines, err := source(s.File)
+				if err != nil {
+					return "", err
+				}
+				n.line(&b, s.File, lines, s.Line)
+			}
+			return "", errors.New(strings.TrimSuffix(b.String(), "\n"))
+		}
+		pos = agentlsp.Position{File: syms[0].File, Line: syms[0].Line, Column: syms[0].Column}
+	} else if ix, pos, err = n.at(q); err != nil {
+		return "", err
+	}
+	refs, err := ix.References(pos)
+	if err != nil {
+		return "", err
+	}
+	if len(refs.Uses)+len(refs.Implementations) == 0 {
+		return "", errors.New("no uses found")
+	}
+	groups := []struct {
+		head  string
+		files []*file
+	}{{"", byFile(refs.Uses)}, {"implementations:\n", byFile(refs.Implementations)}}
+	shown := map[*file]int{} // the lines of a file that print: first one of each file, then the rest in order
+	for _, g := range groups {
+		for _, f := range g.files {
+			if limit > 0 {
+				shown[f], limit = 1, limit-1
+			}
+		}
+	}
+	for _, g := range groups {
+		for _, f := range g.files {
+			more := min(len(f.lines)-shown[f], limit)
+			shown[f], limit = shown[f]+more, limit-more
+		}
+	}
+	var b strings.Builder
+	for _, g := range groups {
+		if len(g.files) > 0 {
+			b.WriteString(g.head)
+		}
+		left, leftFiles := 0, 0
+		for _, f := range g.files {
+			if k := len(f.lines) - shown[f]; k > 0 {
+				left, leftFiles = left+k, leftFiles+1
+			}
+			if shown[f] == 0 {
+				continue
+			}
+			lines, err := source(f.path)
+			if err != nil {
+				return "", err
+			}
+			for _, l := range f.lines[:shown[f]] {
+				n.line(&b, f.path, lines, l)
+			}
+		}
+		if left > 0 {
+			fmt.Fprintf(&b, "%d more lines in %d files\n", left, leftFiles)
+		}
+	}
+	return b.String(), nil
+}
+
+// file is the places of a group of ref in one file.
+type file struct {
+	path   string
+	lines  []int        // the lines with places, in order
+	places map[int]bool // the lines with places
+}
+
+// byFile is the places of locs by file, the files with most lines first, otherwise in the order of locs.
+func byFile(locs []agentlsp.Location) []*file {
+	var files []*file
+	byPath := map[string]*file{}
+	for _, l := range locs {
+		f := byPath[l.File]
+		if f == nil {
+			f = &file{path: l.File, places: map[int]bool{}}
+			byPath[l.File] = f
+			files = append(files, f)
+		}
+		if !f.places[l.Line] {
+			f.lines = append(f.lines, l.Line)
+		}
+		f.places[l.Line] = true
+	}
+	slices.SortStableFunc(files, func(a, b *file) int { return cmp.Compare(len(b.lines), len(a.lines)) })
+	return files
+}
+
+// symbols is the declarations named name in the code of the root of the current directory, with its provider.
+func (n *Navigator) symbols(name string) (provider, []agentlsp.Symbol, error) {
+	ix, err := n.open(n.cwd) // shortcut: names are looked up in Go code only; PHP adds a way to choose
+	if err != nil {
+		return nil, nil, err
+	}
+	syms, err := ix.Symbols(name)
+	return ix, syms, err
+}
+
+// at is the position of the question's expression and the provider of its file.
+func (n *Navigator) at(q Question) (provider, agentlsp.Position, error) {
+	if err := goFile(q.Path); err != nil {
+		return nil, agentlsp.Position{}, err
+	}
+	pos, err := locate(q)
+	if err != nil {
+		return nil, pos, err
+	}
+	ix, err := n.open(filepath.Dir(pos.File))
+	return ix, pos, err
 }
 
 // Show is what show prints for t, a target with a Symbol, or the whole file with outline: the declarations named
@@ -265,12 +408,10 @@ func locate(q Question) (agentlsp.Position, error) {
 	if err != nil {
 		return agentlsp.Position{}, err
 	}
-	raw, err := os.ReadFile(path)
+	lines, err := source(path)
 	if err != nil {
 		return agentlsp.Position{}, err
 	}
-	text, _ := edit.Decode(raw)
-	lines := edit.Lines(text)
 	if q.Hash != "" || q.Line > len(lines) { // CheckLine also names a line past the end
 		if reason := edit.CheckLine(lines, q.Line, q.Hash); reason != "" {
 			return agentlsp.Position{}, errors.New(reason)
@@ -326,24 +467,19 @@ func whole(line string, start int, expr string) bool {
 
 func isWord(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) }
 
-// render writes the lines of d: its doc comment and signature, with body the whole declaration. A declaration
-// outside the code of the root prints with its absolute path.
-func (n *Navigator) render(b *strings.Builder, d agentlsp.Declaration, body bool) error {
-	raw, err := os.ReadFile(d.File)
+// source is the lines of the file at path.
+func source(path string) ([]string, error) {
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	text, _ := edit.Decode(raw)
-	lines := edit.Lines(text)
-	from, to := declLines(d, body)
-	path := d.File
-	if d.Origin != agentlsp.OriginStd && d.Origin != agentlsp.OriginModule {
-		path = n.rel(path)
-	}
-	for l := from; l <= to; l++ {
-		fmt.Fprintf(b, "%s:%d#%s: %s\n", path, l, edit.Hash(lines[l-1]), lines[l-1])
-	}
-	return nil
+	return edit.Lines(text), nil
+}
+
+// line writes line l of the file at path, given its lines, as <path>:<l>#<hash>: <text>.
+func (n *Navigator) line(b *strings.Builder, path string, lines []string, l int) {
+	fmt.Fprintf(b, "%s:%d#%s: %s\n", n.rel(path), l, edit.Hash(lines[l-1]), lines[l-1])
 }
 
 // declLines is the lines of d: from its doc comment to the end of its signature, with body to its end.
@@ -358,10 +494,14 @@ func declLines(d agentlsp.Declaration, body bool) (from, to int) {
 	return from, to
 }
 
-// rel is path relative to the directory of the navigator, or path itself when it has none, as on another drive.
+// rel is path as an answer prints it: relative to the directory of the navigator for a file of the project (the
+// root, the modules of its go.work and its vendor directory, by the Origin of the open provider), otherwise absolute,
+// as in the standard library, the module cache or on another drive.
 func (n *Navigator) rel(path string) string {
-	if r, err := filepath.Rel(n.cwd, path); err == nil {
-		return r
+	if o := n.ix.Origin(path); o == agentlsp.OriginRoot || o == agentlsp.OriginVendor {
+		if r, err := filepath.Rel(n.cwd, path); err == nil {
+			return r
+		}
 	}
 	return path
 }

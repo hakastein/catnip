@@ -89,6 +89,9 @@ func TestRun(t *testing.T) {
 		{name: "def outside Go code", project: `{}`, before: "a\n", args: []string{"def", "p/a.txt:1", "a"}, code: notApplied, after: "a\n"},
 		{name: "def without an expression", project: `{}`, before: "a\n", args: []string{"def", "p/a.txt:1"}, code: badUsage, after: "a\n"},
 		{name: "def --help", project: `{}`, before: "a\n", args: []string{"def", "--help"}, code: ok, after: "a\n", tail: defHelp},
+		{name: "ref outside Go code", project: `{}`, before: "a\n", args: []string{"ref", "p/a.txt:1", "a"}, code: notApplied, after: "a\n"},
+		{name: "ref with a limit below 1", project: `{}`, before: "a\n", args: []string{"ref", "--limit", "0", "p/a.txt:1", "a"}, code: badUsage, after: "a\n"},
+		{name: "ref --help", project: `{}`, before: "a\n", args: []string{"ref", "--help"}, code: ok, after: "a\n", tail: refHelp},
 		{name: "stats --help", project: `{}`, before: "a\n", args: []string{"stats", "--help"}, code: ok, after: "a\n", tail: statsHelp},
 	}
 	for _, tt := range tests {
