@@ -88,6 +88,16 @@ func main() {
 }
 `,
 	"notes.txt": "Add\n",
+	// a module with a vendor directory beside the root
+	"../vend/go.mod":                        "module example.com/vend\n\ngo 1.26\n\nrequire example.com/dep v1.0.0\n",
+	"../vend/vendor/modules.txt":            "# example.com/dep v1.0.0\n## explicit; go 1.26\nexample.com/dep\n",
+	"../vend/vendor/example.com/dep/dep.go": "package dep\n\n// Helper helps.\nfunc Helper() int { return 1 }\n",
+	"../vend/main.go":                       "package main\n\nimport \"example.com/dep\"\n\nfunc main() { dep.Helper() }\n",
+	// a module that a replace takes from a directory beside it
+	"../rep/go.mod":  "module example.com/rep\n\ngo 1.26\n\nrequire example.com/far v1.0.0\n\nreplace example.com/far => ../far\n",
+	"../rep/main.go": "package main\n\nimport \"example.com/far\"\n\nfunc main() { far.Away() }\n",
+	"../far/go.mod":  "module example.com/far\n\ngo 1.26\n",
+	"../far/far.go":  "package far\n\nfunc Away() {}\n",
 }
 
 // newShop writes shop into a fresh directory, makes it the current one and gives the rest of the test a fresh user
@@ -128,6 +138,7 @@ var (
 )
 
 func TestDef(t *testing.T) {
+	dir := newShop(t)
 	tests := []struct {
 		name     string
 		args     []string
@@ -149,6 +160,11 @@ func TestDef(t *testing.T) {
 		{name: "multi-line signature", args: []string{"Total"}, out: "Total\n" + at("cart/cart.go", 16, "// Total sums the prices.") +
 			at("cart/cart.go", 17, "func Total(") + at("cart/cart.go", 18, "\tprices ...int,") + at("cart/cart.go", 19, ") int {"), answered: true},
 		{name: "go.work above the nearest go.mod", args: []string{"pay/pay.go:6", "cart.Cart"}, out: "pay/pay.go:6 cart.Cart\n" + cartDecl, answered: true},
+		{name: "vendor directory of another root", args: []string{"../vend/main.go:5", "dep.Helper"}, out: "../vend/main.go:5 dep.Helper\n" +
+			at("../vend/vendor/example.com/dep/dep.go", 3, "// Helper helps.") +
+			at("../vend/vendor/example.com/dep/dep.go", 4, "func Helper() int { return 1 }"), answered: true},
+		{name: "replaced module of another root", args: []string{"../rep/main.go:5", "far.Away"}, out: "../rep/main.go:5 far.Away\n" +
+			at(filepath.Join(filepath.Dir(dir), "far", "far.go"), 3, "func Away() {}"), answered: true},
 		{name: "body", args: []string{"Add"}, body: true, out: "Add\n" + addBody, answered: true},
 		{name: "several questions", args: []string{"Cart", "Add"}, out: "Cart\n" + cartDecl + "\nAdd\n" + addDecl, answered: true},
 		{name: "changed line", args: []string{"main.go:7#0000", "Add"}, out: "main.go:7#0000 Add\n",
@@ -168,7 +184,6 @@ func TestDef(t *testing.T) {
 		{name: "not Go", args: []string{"notes.txt:1", "Add"}, out: "notes.txt:1 Add\n",
 			errs: "notes.txt:1 Add: no navigation in \".txt\" files: catnip knows Go (.go)\n"},
 	}
-	newShop(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			qs, err := nav.Parse("def", tt.args)

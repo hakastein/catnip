@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,7 +19,6 @@ import (
 
 	agentlsp "github.com/hakastein/agent-lsp"
 	"github.com/hakastein/agent-lsp/golang"
-	"golang.org/x/mod/modfile"
 
 	"github.com/hakastein/catnip/internal/edit"
 	"github.com/hakastein/catnip/internal/view"
@@ -32,6 +30,7 @@ type provider interface {
 	References(pos agentlsp.Position) (agentlsp.References, error)
 	Symbols(name string) ([]agentlsp.Symbol, error)
 	Outline(file string) ([]agentlsp.Symbol, error)
+	Origin(path string) agentlsp.Origin
 	Close() error
 }
 
@@ -94,7 +93,6 @@ func position(s string) (Question, error) {
 type Navigator struct {
 	cwd  string
 	root string
-	mods []string // the directories of the modules the go.work of root uses; none for a module root
 	ix   provider
 }
 
@@ -368,42 +366,13 @@ func (n *Navigator) open(dir string) (provider, error) {
 	if err := n.Close(); err != nil {
 		return nil, err
 	}
-	n.ix, n.root, n.mods = nil, "", nil
-	mods, err := workModules(root)
-	if err != nil {
-		return nil, err
-	}
+	n.ix, n.root = nil, ""
 	ix, err := golang.Open(root, nil)
 	if err != nil {
 		return nil, err
 	}
-	n.ix, n.root, n.mods = ix, root, mods
+	n.ix, n.root = ix, root
 	return ix, nil
-}
-
-// workModules is the directories of the modules the go.work of root uses, also outside root; none without a go.work.
-func workModules(root string) ([]string, error) {
-	path := filepath.Join(root, "go.work")
-	data, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	wf, err := modfile.ParseWork(path, data, nil)
-	if err != nil {
-		return nil, err
-	}
-	var dirs []string
-	for _, u := range wf.Use {
-		dir := filepath.FromSlash(u.Path)
-		if !filepath.IsAbs(dir) {
-			dir = filepath.Join(root, dir)
-		}
-		dirs = append(dirs, dir)
-	}
-	return dirs, nil
 }
 
 // goRoot is the directory of the go.work nearest above dir, or else of the nearest go.mod, as the go command finds
@@ -525,16 +494,13 @@ func declLines(d agentlsp.Declaration, body bool) (from, to int) {
 	return from, to
 }
 
-// rel is path as an answer prints it: relative to the directory of the navigator for a file of the project, the root
-// and the modules of its go.work, otherwise absolute, as in the standard library, the module cache or on another
-// drive. The project is what agent-lsp marks agentlsp.OriginRoot; the Locations of ref carry no Origin.
+// rel is path as an answer prints it: relative to the directory of the navigator for a file of the project (the
+// root, the modules of its go.work and its vendor directory, by the Origin of the open provider), otherwise absolute,
+// as in the standard library, the module cache or on another drive.
 func (n *Navigator) rel(path string) string {
-	for _, dir := range append([]string{n.root}, n.mods...) {
-		if r, err := filepath.Rel(dir, path); err == nil && filepath.IsLocal(r) {
-			if r, err := filepath.Rel(n.cwd, path); err == nil {
-				return r
-			}
-			return path
+	if o := n.ix.Origin(path); o == agentlsp.OriginRoot || o == agentlsp.OriginVendor {
+		if r, err := filepath.Rel(n.cwd, path); err == nil {
+			return r
 		}
 	}
 	return path
