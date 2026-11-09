@@ -58,12 +58,11 @@ is reported on a line of its own.
 ## New file
 
 ```bash
-catnip write src/new.go 'package x
-
-func New() {}'
+catnip write src/new.go <<'EOF'
+package x
+EOF
 ```
 
-The content is one argument, quoted as in `edit`; a missing final newline is added. Without it `write` reads stdin.
 Rewriting an existing file keeps its BOM, line endings and whether it ends with a newline.
 
 ## Find a declaration (Go)

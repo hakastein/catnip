@@ -55,8 +55,6 @@ func TestRun(t *testing.T) {
 		{name: "insert at a changed line: nothing applied", project: `{}`, before: "a\n", args: []string{"edit", "p/a.txt", "--before", "1#" + edit.Hash("x"), "b"}, code: notApplied, after: "a\n"},
 		{name: "write keeps BOM and CRLF of the file", project: `{}`, before: "\ufeffa\r\n", args: []string{"write", "p/a.txt"}, stdin: "b\nc\n", code: ok, after: "\ufeffb\r\nc\r\n"},
 		{name: "write keeps a missing final newline", project: `{}`, before: "a", args: []string{"write", "p/a.txt"}, stdin: "b\n", code: ok, after: "b"},
-		{name: "write the content argument with a final newline", project: `{}`, before: "a\n", args: []string{"write", "p/a.txt", "b\nc"}, code: ok, after: "b\nc\n"},
-		{name: "write with too many arguments", project: `{}`, before: "a\n", args: []string{"write", "p/a.txt", "b", "c"}, code: badUsage, after: "a\n"},
 		{
 			name:    "fixer change is named, its diff hidden",
 			project: `{"*.txt": {"fix": {"up": "printf 'B\\n' > a.txt"}}}`,
