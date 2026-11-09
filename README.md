@@ -75,31 +75,34 @@ Windows — из Git for Windows в `PATH`.
 ```bash
 catnip def main.go:237 view.ParseTarget    # позиция и выражение со строки
 catnip def main.go:237#f032 ParseTarget    # адрес строки из show; строка не должна была измениться
-catnip def main.go:236:53 call.Flags       # колонка выбирает одно из нескольких одинаковых выражений
+catnip def main.go:236:53 call.Flags       # колонка (в байтах с 1) выбирает одно из одинаковых выражений
 catnip def view.Target Navigator.Close     # имена: Func, Type.Method, pkg.Func, pkg.Type.Method
 catnip def --body Navigator.Def            # объявление целиком
 ```
 
 ```
 main.go:237 view.ParseTarget
-internal/view/view.go:27#2450: // ParseTarget reads path, path:from-to, path:line or path:line:column (1-based, as positions in LSP tools print
-internal/view/view.go:28#57ef: // them). A position shows context lines on each side.
-internal/view/view.go:29#874a: func ParseTarget(s string, context int) (Target, error) {
+internal/view/view.go:29#3f2c: // ParseTarget reads path, path:from-to, path:line, path:line:column (1-based, as positions in LSP tools print them)
+internal/view/view.go:30#4a4d: // or path:line#hash, the address catnip prints. A position shows context lines on each side.
+internal/view/view.go:31#874a: func ParseTarget(s string, context int) (Target, error) {
 
 main.go:244 fmt.Fprintln
-/usr/local/go/src/fmt/print.go:300#2e33 (built-in): // Fprintln formats using the default formats for its operands and writes to w.
+/usr/local/go/src/fmt/print.go:300#2e33: // Fprintln formats using the default formats for its operands and writes to w.
 /usr/local/go/src/fmt/print.go:301#d404: // Spaces are always added between operands and a newline is appended.
 /usr/local/go/src/fmt/print.go:302#a23d: // It returns the number of bytes written and any write error encountered.
 /usr/local/go/src/fmt/print.go:303#0018: func Fprintln(w io.Writer, a ...any) (n int, err error) {
 ```
 
 - Курсор ставится на последнее слово выражения (`s.store.Write` → `Write`). Выражение должно стоять на строке один
-  раз как целое слово; если их несколько, колонка `путь:строка:колонка` выбирает то, что её накрывает.
+  раз как целое слово; если их несколько, колонка `путь:строка:колонка` выбирает то, что её накрывает. Колонка
+  считается в байтах строки с 1.
 - Голое имя совпадает с последним сегментом квалифицированных имён; по имени ищутся пакеты проекта, тесты включительно.
 - Ответ на каждый вопрос — блок: строка вопроса, затем докблок и сигнатура каждого объявления, с `--body` — объявление
   целиком, каждая строка — `путь:N#hash: текст`. Блоки разделены пустой строкой. Пути — от текущего каталога;
-  объявление стандартной библиотеки печатается с абсолютным путём и пометкой `(built-in)` на первой строке,
-  зависимости — с пометкой `(vendor)`. Вопрос на самом объявлении отвечает об этом объявлении.
+  объявление вне проекта (стандартная библиотека, зависимость из кэша модулей) печатается с абсолютным путём,
+  зависимость из `vendor/` — с путём через `vendor/`. Вопрос на самом объявлении отвечает об этом объявлении.
+- Адрес `путь:N#hash` из ответа `catnip show` принимает как есть: печатает строку N с окрестностью, а если строка
+  изменилась — ту же ошибку с текущей строкой, что `def` и `edit`, и код 1.
 - Вопрос без ответа (строка изменилась, выражения на ней нет или оно стоит там несколько раз, объявления нет)
   оставляет строку вопроса, причину с текущей строкой печатает в stderr, остальные вопросы вызова отвечены; код
   выхода — 1.

@@ -28,7 +28,10 @@ func TestParseTarget(t *testing.T) {
 		{in: `C:\src\a.go`, want: view.Target{Path: `C:\src\a.go`}},
 		{in: `C:\src\a.go:3-9`, want: view.Target{Path: `C:\src\a.go`, From: 3, To: 9}},
 		{in: "a.go:0", err: "a.go:0: lines start at 1"},
-		{in: "a.go:3:0", err: "a.go:3:0: columns start at 1"},
+		{in: "a.go:10#0b1c", want: view.Target{Path: "a.go", From: 8, To: 12, Line: 10, Hash: "0b1c"}},
+		{in: `C:\a#b\a.go`, want: view.Target{Path: `C:\a#b\a.go`}},
+		{in: "a.go:3#zz", err: `a.go:3#zz: "3#zz" is not LINE#HASH as catnip show prints it`},
+		{in: "a.go:3#0b1c-4#0b1c", err: `a.go:3#0b1c-4#0b1c: "3#0b1c-4#0b1c" is a range, want one LINE#HASH`},
 		{in: "a.go:9-3", err: "a.go:9-3: range ends before it starts"},
 	}
 	for _, tt := range tests {
@@ -56,6 +59,8 @@ func TestRender(t *testing.T) {
 		{name: "range past the end", target: view.Target{Path: "f", From: 10, To: 12}, gutter: "line", err: "line 12 is past the end: f has 11 lines"},
 		{name: "position context cut at the end", target: view.Target{Path: "f", From: 9, To: 13, Line: 11}, gutter: "line", want: " 9\ti\n10\tj\n11\tk\n"},
 		{name: "position past the end", target: view.Target{Path: "f", From: 10, To: 14, Line: 12}, gutter: "line", err: "line 12 is past the end: f has 11 lines"},
+		{name: "address", target: view.Target{Path: "f", From: 2, To: 2, Line: 2, Hash: edit.Hash("b")}, gutter: "line", want: "2\tb\n"},
+		{name: "changed line", target: view.Target{Path: "f", From: 2, To: 2, Line: 2, Hash: "0000"}, gutter: "line", err: "line 2 changed: 2#" + edit.Hash("b") + "\tb"},
 		{
 			name:   "hash and blame columns",
 			target: view.Target{Path: "f", From: 1, To: 2},

@@ -73,18 +73,14 @@ func Parse(args []string) ([]Question, error) {
 
 // position reads a position as show and edit take it; a Question without a Path when s is not a position.
 func position(s string) (Question, error) {
-	if i := strings.LastIndex(s, ":"); i > 0 && strings.Contains(s[i:], "#") {
-		if strings.Contains(s[i:], "-") {
-			return Question{}, fmt.Errorf("%s: %q is a range, want one LINE#HASH", s, s[i+1:])
-		}
-		r, err := edit.ParseRange(s, "LINE#HASH", s[i+1:])
-		return Question{Path: s[:i], Line: r.From, Hash: r.FromHash}, err
-	}
 	t, err := view.ParseTarget(s, 0)
 	if err != nil || t.Line == 0 {
 		return Question{}, err
 	}
-	return Question{Path: t.Path, Line: t.Line, Column: t.Column}, nil
+	if t.Column == 0 && strings.Count(s[len(t.Path):], ":") == 2 { // show takes column 0; it covers no expression
+		return Question{}, fmt.Errorf("%s: columns start at 1", s)
+	}
+	return Question{Path: t.Path, Line: t.Line, Column: t.Column, Hash: t.Hash}, nil
 }
 
 // Navigator answers questions from the directory cwd; it keeps one provider open, for the root of the last question.
@@ -286,8 +282,7 @@ func whole(line string, start int, expr string) bool {
 func isWord(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) }
 
 // render writes the lines of d: its doc comment and signature, with body the whole declaration. A declaration
-// outside the code of the root prints with its absolute path, and its first line is marked built-in for the
-// standard library and vendor for a dependency.
+// outside the code of the root prints with its absolute path.
 func (n *Navigator) render(b *strings.Builder, d agentlsp.Declaration, body bool) error {
 	raw, err := os.ReadFile(d.File)
 	if err != nil {
@@ -302,21 +297,12 @@ func (n *Navigator) render(b *strings.Builder, d agentlsp.Declaration, body bool
 	if body {
 		to = d.Range.EndLine
 	}
-	path, mark := d.File, ""
-	switch d.Origin {
-	case agentlsp.OriginStd:
-		mark = " (built-in)"
-	case agentlsp.OriginModule:
-		mark = " (vendor)"
-	case agentlsp.OriginVendor:
-		mark = " (vendor)"
-		path = n.rel(path)
-	default:
+	path := d.File
+	if d.Origin != agentlsp.OriginStd && d.Origin != agentlsp.OriginModule {
 		path = n.rel(path)
 	}
 	for l := from; l <= to; l++ {
-		fmt.Fprintf(b, "%s:%d#%s%s: %s\n", path, l, edit.Hash(lines[l-1]), mark, lines[l-1])
-		mark = ""
+		fmt.Fprintf(b, "%s:%d#%s: %s\n", path, l, edit.Hash(lines[l-1]), lines[l-1])
 	}
 	return nil
 }

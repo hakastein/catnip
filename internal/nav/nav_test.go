@@ -31,6 +31,22 @@ type Cart struct {
 func (c *Cart) Add(it string) {
 	c.Items = append(c.Items, strings.TrimSpace(it))
 }
+
+// Total sums the prices.
+func Total(
+	prices ...int,
+) int {
+	return 0
+}
+`,
+	"go.work":    "go 1.26\n\nuse (\n\t.\n\t./pay\n)\n",
+	"pay/go.mod": "module example.com/pay\n\ngo 1.26\n",
+	"pay/pay.go": `package pay
+
+import "example.com/shop/cart"
+
+// Pay charges for c.
+func Pay(c *cart.Cart) {}
 `,
 	"main.go": `package main
 
@@ -94,9 +110,15 @@ func TestDef(t *testing.T) {
 		{name: "address", args: []string{"main.go:7#" + edit.Hash("\tc.Add(\"a\")"), "Add"},
 			out: "main.go:7#" + edit.Hash("\tc.Add(\"a\")") + " Add\n" + addDecl, answered: true},
 		{name: "column picks one of several", args: []string{"main.go:8:17", "Add"}, out: "main.go:8:17 Add\n" + addDecl, answered: true},
+		{name: "column on the last byte", args: []string{"main.go:8:18", "Add"}, out: "main.go:8:18 Add\n" + addDecl, answered: true},
+		{name: "column before the expression", args: []string{"main.go:8:15", "Add"}, out: "main.go:8:15 Add\n",
+			errs: "main.go:8:15 Add: \"Add\" is not at line 8 column 15: " + line8 + "\n"},
 		{name: "type", args: []string{"main.go:6", "&cart.Cart"}, out: "main.go:6 &cart.Cart\n" + cartDecl, answered: true},
 		{name: "on the declaration", args: []string{"cart/cart.go:12", "Add"}, out: "cart/cart.go:12 Add\n" + addDecl, answered: true},
 		{name: "qualified name", args: []string{"cart.Cart.Add"}, out: "cart.Cart.Add\n" + addDecl, answered: true},
+		{name: "multi-line signature", args: []string{"Total"}, out: "Total\n" + at("cart/cart.go", 16, "// Total sums the prices.") +
+			at("cart/cart.go", 17, "func Total(") + at("cart/cart.go", 18, "\tprices ...int,") + at("cart/cart.go", 19, ") int {"), answered: true},
+		{name: "go.work above the nearest go.mod", args: []string{"pay/pay.go:6", "cart.Cart"}, out: "pay/pay.go:6 cart.Cart\n" + cartDecl, answered: true},
 		{name: "body", args: []string{"Add"}, body: true, out: "Add\n" + addBody, answered: true},
 		{name: "several questions", args: []string{"Cart", "Add"}, out: "Cart\n" + cartDecl + "\nAdd\n" + addDecl, answered: true},
 		{name: "changed line", args: []string{"main.go:7#0000", "Add"}, out: "main.go:7#0000 Add\n",
@@ -149,7 +171,7 @@ func TestDefStandardLibrary(t *testing.T) {
 
 	require.NoError(t, n.Close())
 	assert.True(t, answered, errs.String())
-	assert.Regexp(t, `^cart/cart.go:13 strings.TrimSpace\n.+[/\\]src[/\\]strings[/\\]strings\.go:\d+#[0-9a-f]{4} \(built-in\): // TrimSpace `, out.String())
+	assert.Regexp(t, `^cart/cart.go:13 strings.TrimSpace\n.+[/\\]src[/\\]strings[/\\]strings\.go:\d+#[0-9a-f]{4}: // TrimSpace `, out.String())
 }
 
 // errText is the text of err, "" for none.

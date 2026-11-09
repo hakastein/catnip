@@ -49,7 +49,7 @@ const editOps = `  --replace OLD NEW [--count N]    replace the text OLD found e
 
 const usage = `catnip shows and edits files from the shell; commands chain with && by their exit codes.
 
-catnip show <path>[:<from>-<to> | :<line>[:<column>]]
+catnip show <path>[:<from>-<to> | :<line>[:<column> | #<hash>]]
   print the file, its lines <from> to <to>, or line <line> with 5 lines on each side;
   by default each line comes after its address <line>#<hash>, which catnip edit takes
 
@@ -76,10 +76,11 @@ configured for the file. catnip <command> --help prints all flags of the command
 const showHelp = `catnip show prints a file, a range of its lines or the lines around a position.
 Without flags each line comes after its address <line>#<hash>, which catnip edit takes.
 
-usage: catnip show [flags] <path>[:<from>-<to> | :<line>[:<column>]]
+usage: catnip show [flags] <path>[:<from>-<to> | :<line>[:<column> | #<hash>]]
   <path>                    the whole file
   <path>:<from>-<to>        lines <from> to <to>
   <path>:<line>[:<column>]  line <line> with 5 lines on each side
+  <path>:<line>#<hash>      the same by the address of the line; it must not have changed
 
 flags:
   -C N           lines on each side of a position instead of 5
@@ -115,12 +116,11 @@ const defHelp = `catnip def prints where a Go symbol is declared: its doc commen
 <path>:<line>#<hash>: <text>, the address catnip show and edit take. The symbol is the last word of an
 expression from the line of a position, or a name. Each question gets a block: the question, then the
 lines of its declarations; blocks are separated by an empty line. Paths are relative to the current
-directory; a declaration outside the project has an absolute path, and its first line is marked
-(built-in) for the standard library or (vendor) for a dependency.
+directory; a declaration outside the project has an absolute path.
 
 usage: catnip def [--body] <question>...
   <path>:<line> <expression>           the expression stands on the line once
-  <path>:<line>:<column> <expression>  the expression that covers the column
+  <path>:<line>:<column> <expression>  the expression that covers the column, in bytes from 1
   <path>:<line>#<hash> <expression>    the line by its address; it must not have changed
   <name>                               Func, Type.Method, pkg.Func, pkg.Type.Method; a bare
                                        name matches the last segment of qualified names

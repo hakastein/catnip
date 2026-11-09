@@ -78,10 +78,9 @@ catnip def cart.Cart.Add Store                      # names: Func, Type.Method, 
 catnip def --body Store.Write                       # the whole declaration
 ```
 
-Each question gets a block: the question, then the doc comment and signature of each declaration, every line as
-`path:N#hash: text`, ready for `show` and `edit`. A declaration of the standard library or a dependency has an
-absolute path and is marked `(built-in)` or `(vendor)`. Questions mix in one call; one without an answer keeps its
-line, the reason and the current line go to stderr, the others are answered, and the exit code is 1.
+Pass a line address of the answer to `show` as is (`catnip show internal/cart/store.go:12#9c41`); `edit` takes
+the path and `12#9c41` apart.
+
 ## Exit codes
 
 | Code | Meaning |
