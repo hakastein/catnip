@@ -3,6 +3,7 @@ package view
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -17,14 +18,16 @@ import (
 // Target is what to show: the whole file, lines From..To, or the lines around Line.
 type Target struct {
 	Path     string
-	From, To int // 0, 0 for the whole file
-	Line     int // the asked position; 0 for a range
+	From, To int    // 0, 0 for the whole file
+	Line     int    // the asked position; 0 for a range
+	Column   int    // the column of the asked position; 0 without one
+	Hash     string // the hash Line must have, from an address <line>#<hash>; "" without one
 }
 
-var suffix = regexp.MustCompile(`^(.+?):(\d+)(?:-(\d+)|:(\d+))?$`)
+var suffix = regexp.MustCompile(`^(.+?):(\d+)(?:-(\d+)|:(\d+)|(#.*))?$`)
 
-// ParseTarget reads path, path:from-to, path:line or path:line:column (1-based, as positions in LSP tools print
-// them). A position shows context lines on each side.
+// ParseTarget reads path, path:from-to, path:line, path:line:column (1-based, as positions in LSP tools print them)
+// or path:line#hash, the address catnip prints. A position shows context lines on each side.
 func ParseTarget(s string, context int) (Target, error) {
 	m := suffix.FindStringSubmatch(s)
 	if m == nil {
@@ -41,7 +44,20 @@ func ParseTarget(s string, context int) (Target, error) {
 		}
 		return Target{Path: m[1], From: a, To: b}, nil
 	}
-	return Target{Path: m[1], From: max(1, a-context), To: a + context, Line: a}, nil
+	t := Target{Path: m[1], From: max(1, a-context), To: a + context, Line: a}
+	t.Column, _ = strconv.Atoi(m[4])
+	if m[5] != "" {
+		addr := m[2] + m[5]
+		if strings.Contains(addr, "-") {
+			return Target{}, fmt.Errorf("%s: %q is a range, want one LINE#HASH", s, addr)
+		}
+		r, err := edit.ParseRange(s, "LINE#HASH", addr)
+		if err != nil {
+			return Target{}, err
+		}
+		t.Hash = r.FromHash
+	}
+	return t, nil
 }
 
 // Gutters are what Render prints before each line: its address <n>#<hash>, its number, or nothing.
@@ -54,6 +70,11 @@ func Render(text string, t Target, gutter string, blame []string) (string, error
 	from, to, err := t.Lines(len(lines))
 	if err != nil {
 		return "", err
+	}
+	if t.Hash != "" {
+		if reason := edit.CheckLine(lines, t.Line, t.Hash); reason != "" {
+			return "", errors.New(reason)
+		}
 	}
 	width := len(strconv.Itoa(to))
 	var b strings.Builder

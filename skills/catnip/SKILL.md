@@ -1,6 +1,6 @@
 ---
 name: catnip
-description: "Use for every file read or edit, by file tools or shell: cat, sed, head/tail, heredoc, python."
+description: "Use for every file read or edit, by file tools or shell: cat, sed, head/tail, heredoc, python; and to find where a Go symbol is declared."
 ---
 
 # catnip
@@ -65,11 +65,27 @@ EOF
 
 Rewriting an existing file keeps its BOM, line endings and whether it ends with a newline.
 
+## Find a declaration (Go)
+
+Instead of grepping for `func Name`, ask where a symbol is declared: by a position and an expression from its line,
+or by a name. The answer is resolved by types.
+
+```bash
+catnip def internal/cart/cart.go:57 s.store.Write   # the symbol at the last word of the expression
+catnip def internal/cart/cart.go:57#a3f0 Write      # a line address from show; rejected if the line changed
+catnip def internal/cart/cart.go:57:31 Write        # the column picks one of several equal expressions
+catnip def cart.Cart.Add Store                      # names: Func, Type.Method, pkg.Func; a bare name matches any
+catnip def --body Store.Write                       # the whole declaration
+```
+
+Pass a line address of the answer to `show` as is (`catnip show internal/cart/store.go:12#9c41`); `edit` takes
+the path and `12#9c41` apart.
+
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | written, checks passed |
-| 1 | nothing written |
+| 1 | nothing written; `def`: a question has no answer |
 | 2 | bad arguments or config |
 | 3 | written, but a check failed or the file was written in part |

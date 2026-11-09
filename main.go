@@ -20,6 +20,7 @@ import (
 	"github.com/hakastein/catnip/internal/check"
 	"github.com/hakastein/catnip/internal/config"
 	"github.com/hakastein/catnip/internal/edit"
+	"github.com/hakastein/catnip/internal/nav"
 	"github.com/hakastein/catnip/internal/stats"
 	"github.com/hakastein/catnip/internal/store"
 	"github.com/hakastein/catnip/internal/view"
@@ -48,7 +49,7 @@ const editOps = `  --replace OLD NEW [--count N]    replace the text OLD found e
 
 const usage = `catnip shows and edits files from the shell; commands chain with && by their exit codes.
 
-catnip show <path>[:<from>-<to> | :<line>[:<column>]]
+catnip show <path>[:<from>-<to> | :<line>[:<column> | #<hash>]]
   print the file, its lines <from> to <to>, or line <line> with 5 lines on each side;
   by default each line comes after its address <line>#<hash>, which catnip edit takes
 
@@ -58,6 +59,12 @@ catnip edit <path> <edit>...
 ` + editOps + `
 catnip write <path> < content
   replace the file with stdin, creating it if missing
+
+catnip def [--body] <path>:<line>[:<column> | #<hash>] <expression>... | <name>...
+  print where the Go symbol at the last word of the expression from the line is declared,
+  or the one named <name> (Func, Type.Method, pkg.Func): its doc comment and signature,
+  with --body the whole declaration, each line after its address; one block per question;
+  exit 1 when a question has no answer
 
 catnip stats
   open a report on recorded catnip calls in the browser
@@ -69,10 +76,11 @@ configured for the file. catnip <command> --help prints all flags of the command
 const showHelp = `catnip show prints a file, a range of its lines or the lines around a position.
 Without flags each line comes after its address <line>#<hash>, which catnip edit takes.
 
-usage: catnip show [flags] <path>[:<from>-<to> | :<line>[:<column>]]
+usage: catnip show [flags] <path>[:<from>-<to> | :<line>[:<column> | #<hash>]]
   <path>                    the whole file
   <path>:<from>-<to>        lines <from> to <to>
   <path>:<line>[:<column>]  line <line> with 5 lines on each side
+  <path>:<line>#<hash>      the same by the address of the line; it must not have changed
 
 flags:
   -C N           lines on each side of a position instead of 5
@@ -104,6 +112,27 @@ flags:
   --show-fix-diff  also print what each fixer changed
 ` + exitCodes
 
+const defHelp = `catnip def prints where a Go symbol is declared: its doc comment and signature, each line as
+<path>:<line>#<hash>: <text>, the address catnip show and edit take. The symbol is the last word of an
+expression from the line of a position, or a name. Each question gets a block: the question, then the
+lines of its declarations; blocks are separated by an empty line. Paths are relative to the current
+directory; a declaration outside the project has an absolute path.
+
+usage: catnip def [--body] <question>...
+  <path>:<line> <expression>           the expression stands on the line once
+  <path>:<line>:<column> <expression>  the expression that covers the column, in bytes from 1
+  <path>:<line>#<hash> <expression>    the line by its address; it must not have changed
+  <name>                               Func, Type.Method, pkg.Func, pkg.Type.Method; a bare
+                                       name matches the last segment of qualified names
+
+flags:
+  --body  print the whole declaration
+
+exit: 0 every question answered; 1 a question has no answer: the line changed, the expression
+  is not on it or stands there more than once, no declaration; the other questions are answered;
+  2 bad arguments
+`
+
 const statsHelp = `catnip stats serves a report on recorded catnip calls at a local address until interrupted,
 prints the address and opens it in the browser. Every other call is recorded in
 <user config dir>/catnip/stats.db.
@@ -114,7 +143,7 @@ exit: 1 the report failed to start or stopped, 2 bad arguments
 `
 
 // helps are the helps of the commands by name.
-var helps = map[string]string{"show": showHelp, "edit": editHelp, "write": writeHelp, "stats": statsHelp}
+var helps = map[string]string{"show": showHelp, "edit": editHelp, "write": writeHelp, "def": defHelp, "stats": statsHelp}
 
 func main() {
 	call := stats.Call{Time: time.Now(), Argv: os.Args[1:]}
@@ -145,6 +174,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.C
 		return editCmd(args[1:], stdout, stderr, call)
 	case "write":
 		return write(args[1:], stdin, stdout, stderr, call)
+	case "def":
+		return def(args[1:], stdout, stderr, call)
 	case "stats":
 		return statsCmd(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
@@ -374,6 +405,46 @@ func commit(cfg *config.Config, path string, before, after []byte, showFixDiff b
 		}
 	}
 	return code
+}
+
+func def(args []string, stdout, stderr io.Writer, call *stats.Call) int {
+	fl := newFlags("def")
+	body := fl.Bool("body", false, "print the whole declaration")
+	var questions []string
+	err := fl.Parse(args)
+	for err == nil && fl.NArg() > 0 { // flags may follow the questions
+		questions = append(questions, fl.Arg(0))
+		err = fl.Parse(fl.Args()[1:])
+	}
+	var qs []nav.Question
+	if err == nil {
+		qs, err = nav.Parse(questions)
+	}
+	if err != nil {
+		return usageError(err, defHelp, stdout, stderr)
+	}
+	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
+	for _, q := range qs {
+		if q.Path != "" {
+			call.File = q.Path
+			break
+		}
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return notApplied
+	}
+	n := nav.New(cwd)
+	answered := n.Def(qs, *body, stdout, stderr)
+	if err := n.Close(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return notApplied
+	}
+	if !answered {
+		return notApplied
+	}
+	return ok
 }
 
 func statsCmd(args []string, stdout, stderr io.Writer) int {
