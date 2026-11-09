@@ -66,6 +66,11 @@ catnip def [--body] <path>:<line>[:<column> | #<hash>] <expression>... | <name>.
   with --body the whole declaration, each line after its address; one block per question;
   exit 1 when a question has no answer
 
+catnip ref [--limit <n>] <path>:<line>[:<column> | #<hash>] <expression>... | <name>...
+  print the uses of the Go symbol at the last word of the expression from the line, or of
+  the one named <name>, and the types and methods that implement it, by file, each line
+  after its address; one block per question; exit 1 when a question has no answer
+
 catnip stats
   open a report on recorded catnip calls in the browser
 
@@ -133,6 +138,31 @@ exit: 0 every question answered; 1 a question has no answer: the line changed, t
   2 bad arguments
 `
 
+const refHelp = `catnip ref prints the uses of a Go symbol, each line as <path>:<line>#<hash>: <text>, the
+address catnip show and edit take, then after the line "implementations:" the types and methods
+that implement an interface type or a method of one. The symbol is the last word of an expression
+from the line of a position, or a name. Each question gets a block: the question, then the lines
+of each group by file, the files with most places first; places on one line are one line marked
+<path>:<line>#<hash> (<n> places): <text>. Lines left out end the group as "<n> more lines in <m>
+files". Blocks are separated by an empty line. Paths are relative to the current directory; a file
+outside the project has an absolute path.
+
+usage: catnip ref [--limit <n>] <question>...
+  <path>:<line> <expression>           the expression stands on the line once
+  <path>:<line>:<column> <expression>  the expression that covers the column, in bytes from 1
+  <path>:<line>#<hash> <expression>    the line by its address; it must not have changed
+  <name>                               Func, Type.Method, pkg.Func, pkg.Type.Method; a bare
+                                       name matches the last segment of qualified names and
+                                       must name one declaration
+
+flags:
+  --limit <n>  lines of an answer instead of 60: first a line of each file, then the rest
+
+exit: 0 every question answered; 1 a question has no answer: the line changed, the expression
+  is not on it or stands there more than once, the name names no declaration or several, no
+  uses; the other questions are answered; 2 bad arguments
+`
+
 const statsHelp = `catnip stats serves a report on recorded catnip calls at a local address until interrupted,
 prints the address and opens it in the browser. Every other call is recorded in
 <user config dir>/catnip/stats.db.
@@ -143,7 +173,7 @@ exit: 1 the report failed to start or stopped, 2 bad arguments
 `
 
 // helps are the helps of the commands by name.
-var helps = map[string]string{"show": showHelp, "edit": editHelp, "write": writeHelp, "def": defHelp, "stats": statsHelp}
+var helps = map[string]string{"show": showHelp, "edit": editHelp, "write": writeHelp, "def": defHelp, "ref": refHelp, "stats": statsHelp}
 
 func main() {
 	call := stats.Call{Time: time.Now(), Argv: os.Args[1:]}
@@ -176,6 +206,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.C
 		return write(args[1:], stdin, stdout, stderr, call)
 	case "def":
 		return def(args[1:], stdout, stderr, call)
+	case "ref":
+		return ref(args[1:], stdout, stderr, call)
 	case "stats":
 		return statsCmd(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
@@ -410,18 +442,40 @@ func commit(cfg *config.Config, path string, before, after []byte, showFixDiff b
 func def(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 	fl := newFlags("def")
 	body := fl.Bool("body", false, "print the whole declaration")
+	qs, err := questions(fl, args, call)
+	if err != nil {
+		return usageError(err, defHelp, stdout, stderr)
+	}
+	return navigate(stdout, stderr, func(n *nav.Navigator) bool { return n.Def(qs, *body, stdout, stderr) })
+}
+
+func ref(args []string, stdout, stderr io.Writer, call *stats.Call) int {
+	fl := newFlags("ref")
+	limit := fl.Int("limit", 60, "lines of an answer")
+	qs, err := questions(fl, args, call)
+	if err == nil && *limit < 1 {
+		err = fmt.Errorf("--limit %d: want 1 or more", *limit)
+	}
+	if err != nil {
+		return usageError(err, refHelp, stdout, stderr)
+	}
+	return navigate(stdout, stderr, func(n *nav.Navigator) bool { return n.Ref(qs, *limit, stdout, stderr) })
+}
+
+// questions parses the flags and questions of a navigation command and adds the flags and the first path to call.
+func questions(fl *flag.FlagSet, args []string, call *stats.Call) ([]nav.Question, error) {
 	var questions []string
 	err := fl.Parse(args)
 	for err == nil && fl.NArg() > 0 { // flags may follow the questions
 		questions = append(questions, fl.Arg(0))
 		err = fl.Parse(fl.Args()[1:])
 	}
-	var qs []nav.Question
-	if err == nil {
-		qs, err = nav.Parse(questions)
-	}
 	if err != nil {
-		return usageError(err, defHelp, stdout, stderr)
+		return nil, err
+	}
+	qs, err := nav.Parse(fl.Name(), questions)
+	if err != nil {
+		return nil, err
 	}
 	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
 	for _, q := range qs {
@@ -430,13 +484,18 @@ func def(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 			break
 		}
 	}
+	return qs, nil
+}
+
+// navigate answers with a navigator in the current directory; answer reports whether every question was answered.
+func navigate(stdout, stderr io.Writer, answer func(*nav.Navigator) bool) int {
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return notApplied
 	}
 	n := nav.New(cwd)
-	answered := n.Def(qs, *body, stdout, stderr)
+	answered := answer(n)
 	if err := n.Close(); err != nil {
 		fmt.Fprintln(stderr, err)
 		return notApplied
