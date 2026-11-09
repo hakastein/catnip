@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -123,6 +124,20 @@ func newShop(t *testing.T) string {
 	t.Chdir(dir)
 	return dir
 }
+
+// native is the expected stderr s with <dir> and <up> made the directory of the project and the one that holds it;
+// the paths under them, written with slashes, take the separator of the OS, as the provider prints them.
+func native(s, dir string) string {
+	return placeholder.ReplaceAllStringFunc(s, func(p string) string {
+		base, rest, _ := strings.Cut(p, ">")
+		if base == "<up" {
+			return filepath.Dir(dir) + filepath.FromSlash(rest)
+		}
+		return dir + filepath.FromSlash(rest)
+	})
+}
+
+var placeholder = regexp.MustCompile(`<(dir|up)>[^\s:,]*`)
 
 // at is the line of an answer: the address of line n of path and its text.
 func at(path string, n int, text string) string {
@@ -374,7 +389,7 @@ func TestRename(t *testing.T) {
 			require.NoError(t, n.Close())
 			assert.Equal(t, tt.code, code)
 			assert.Equal(t, tt.out, out.String())
-			assert.Equal(t, strings.NewReplacer("<dir>", dir, "<up>", filepath.Dir(dir)).Replace(filepath.FromSlash(tt.errs)), errs.String())
+			assert.Equal(t, native(tt.errs, dir), errs.String())
 			for path, want := range tt.files {
 				got, err := os.ReadFile(path)
 				require.NoError(t, err)
