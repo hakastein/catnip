@@ -41,9 +41,9 @@ call, one block per name.
 | `grep -rn 'Name'` to find who calls or uses it | `catnip ref Name` |
 | `grep -rn 'A\|B\|C'` over several names | `catnip ref A B C` |
 | grep for the types that implement an interface | `catnip ref Iface.Method`: uses, then `implementations:` |
-| editing every use of a name by hand | `catnip rename <path>:<line> <expression> <new name>` |
 
-grep stays for text that is not a symbol: strings, SQL, config keys, comments, and code at another git revision.
+grep stays for text that is not a symbol (strings, SQL, config keys, comments), for code that is not Go and for code
+at another git revision.
 
 ```bash
 catnip def --body Store.Write Cart.Add              # the whole declarations; without --body the doc and signature
@@ -53,7 +53,8 @@ catnip ref Store.Write Cart.Add                     # uses of each, files with m
 catnip ref --limit 200 Store.Write                  # more than the default 60 lines
 ```
 
-A name that names several declarations is an error listing their addresses; ask by one of them. Answer lines are
+A bare name matches the last segment of qualified names: `def` prints every declaration it matches, `ref` refuses a
+name of several declarations and lists their addresses to ask by. Answer lines are
 `path:N#hash: text`: pass `path:N#hash` to `show` as is, `edit` takes the path and `N#hash` apart. When `ref` ends with
 `<n> more lines in <m> files`, raise `--limit`.
 
