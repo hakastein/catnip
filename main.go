@@ -49,10 +49,11 @@ const editOps = `  --replace OLD NEW [--count N]    replace the text OLD found e
 
 const usage = `catnip shows and edits files from the shell; commands chain with && by their exit codes.
 
-catnip show <path>[:<from>-<to> | :<line>[:<column> | #<hash>] | ::<symbol>] [--outline]
+catnip show [--rev <rev>] <path>[:<from>-<to> | :<line>[:<column> | #<hash>] | ::<symbol>]... [--outline]
   print the file, its lines <from> to <to>, line <line> with 5 lines on each side, or the
   Go declaration <symbol> (Func, Type, Type.Method) from its doc comment to its end;
-  --outline prints the line of each declaration of a Go file; by default each line comes
+  --outline prints the line of each declaration of a Go file; --rev prints the file as it
+  was in a git revision; several targets print one block each; by default each line comes
   after its address <line>#<hash>, which catnip edit takes
 
 catnip edit <path> <edit>...
@@ -89,14 +90,17 @@ const showHelp = `catnip show prints a file, a range of its lines, the lines aro
 declarations of a Go symbol. Without flags each line comes after its address <line>#<hash>, which
 catnip edit takes.
 
-usage: catnip show [flags] <path>[:<from>-<to> | :<line>[:<column> | #<hash>] | ::<symbol>]
+usage: catnip show [flags] <path>[:<from>-<to> | :<line>[:<column> | #<hash>] | ::<symbol>]...
   <path>                    the whole file
-  <path>:<from>-<to>        lines <from> to <to>
+  <path>:<from>-<to>        lines <from> to <to>; a range past the end of the file prints to
+                            its last line and warns on stderr
   <path>:<line>[:<column>]  line <line> with 5 lines on each side
   <path>:<line>#<hash>      the same by the address of the line; it must not have changed
   <path>::<symbol>          each Go declaration named <symbol> in the file (Func, Type,
                             Type.Method, Type.Field) from its doc comment to its end;
                             declarations are separated by an empty line
+Several targets print one after another, each block after a line with the target as given,
+blocks separated by an empty line; a target that does not print gives its reason on stderr.
 
 flags:
   -C N           lines on each side of a position instead of 5
@@ -105,8 +109,10 @@ flags:
   --gutter line  only the line number, no hash
   --gutter none  no address
   --blame        the commit, author and date of each line
+  --rev <rev>    the file as it was in the git revision <rev>, with its addresses and blame;
+                 not with ::<symbol> or --outline
 
-exit: 0 printed; 1 nothing printed: no file, the line changed, no declaration <symbol>,
+exit: 0 printed; 1 a target not printed: no file, the line changed, no declaration <symbol>,
   not a Go file; 2 bad arguments
 `
 
@@ -286,6 +292,7 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 	blame := fl.Bool("blame", false, "add git blame of each line")
 	context := fl.Int("C", 5, "lines of context around a position")
 	outline := fl.Bool("outline", false, "the line of each declaration of a Go file")
+	rev := fl.String("rev", "", "show the file as it was in this git revision")
 	args = slices.Clone(args) // args shares its array with the recorded argv
 	for i, a := range args {
 		if a == "--" {
@@ -295,64 +302,107 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 			args[i] = "-C=" + a[2:] // -C0 as grep takes it; flag reads it as a flag named C0
 		}
 	}
-	pos, err := operands(fl, args)
+	ops, err := operands(fl, args)
 	switch {
 	case err != nil:
 	case !slices.Contains(view.Gutters, *gutter):
 		err = fmt.Errorf("--gutter %q: want one of %s", *gutter, strings.Join(view.Gutters, ", "))
 	case *context < 0:
 		err = fmt.Errorf("-C %d: want 0 or more", *context)
-	case len(pos) != 1:
-		err = fmt.Errorf("show takes one path, got %d", len(pos))
+	case len(ops) == 0:
+		err = errors.New("show takes a path, got none")
 	}
 	if err != nil {
 		return usageError(err, showHelp, stdout, stderr)
 	}
-	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
-	t, err := view.ParseTarget(pos[0], *context)
-	if err == nil && *outline && (t.From != 0 || t.Symbol != "") {
-		err = fmt.Errorf("--outline %s: want a path without lines or a symbol", pos[0])
-	}
-	if err != nil {
-		return usageError(err, showHelp, stdout, stderr)
-	}
-	call.File = t.Path
-	ts := []view.Target{t}
-	if *outline || t.Symbol != "" {
-		if ts, err = declarations(t, *outline); err != nil {
-			fmt.Fprintln(stderr, err)
-			return notApplied
+	revSet := false
+	fl.Visit(func(f *flag.Flag) {
+		call.Flags = append(call.Flags, dashed(f.Name))
+		revSet = revSet || f.Name == "rev"
+	})
+	ts := make([]view.Target, len(ops))
+	for i, op := range ops {
+		ts[i], err = view.ParseTarget(op, *context)
+		switch {
+		case err != nil:
+		case *outline && (ts[i].From != 0 || ts[i].Symbol != ""):
+			err = fmt.Errorf("--outline %s: want a path without lines or a symbol", op)
+		case revSet && (*rev == "" || strings.HasPrefix(*rev, "-")):
+			err = fmt.Errorf("--rev %q: want a git revision", *rev)
+		case *rev != "" && (*outline || ts[i].Symbol != ""):
+			err = fmt.Errorf("--rev %s %s: ::<symbol> and --outline read the working tree", *rev, op)
 		}
-	}
-	raw, err := os.ReadFile(t.Path)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return notApplied
-	}
-	text, _ := edit.Decode(raw)
-	for i, t := range ts {
-		if i > 0 && !*outline { // declarations of one name print as blocks
-			fmt.Fprintln(stdout)
-		}
-		var notes []string
-		if *blame {
-			from, to, err := t.Lines(len(edit.Lines(text)))
-			if err == nil {
-				notes, err = view.Blame(t.Path, from, to)
-			}
-			if err != nil {
-				fmt.Fprintln(stderr, err)
-				return notApplied
-			}
-		}
-		out, err := view.Render(text, t, *gutter, notes)
 		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return notApplied
+			return usageError(err, showHelp, stdout, stderr)
+		}
+	}
+	call.File = ts[0].Path
+	code := ok
+	prefix := func(i int) string { // with several targets, what a target says on stderr starts with the target
+		if len(ts) > 1 {
+			return ops[i] + ": "
+		}
+		return ""
+	}
+	for i, t := range ts {
+		if len(ts) > 1 {
+			if i > 0 {
+				fmt.Fprintln(stdout)
+			}
+			fmt.Fprintln(stdout, ops[i])
+		}
+		out, warning, err := showTarget(t, *rev, *outline, *gutter, *blame)
+		if err != nil {
+			fmt.Fprintln(stderr, prefix(i)+err.Error())
+			code = notApplied
+			continue
+		}
+		if warning != "" {
+			fmt.Fprintln(stderr, prefix(i)+warning)
 		}
 		fmt.Fprint(stdout, out)
 	}
-	return ok
+	return code
+}
+
+// showTarget is what show prints for one target, the file as it was in the git revision rev when rev is not "", and
+// the warning that its range is cut at the end of the file.
+func showTarget(t view.Target, rev string, outline bool, gutter string, blame bool) (string, string, error) {
+	ts := []view.Target{t}
+	if outline || t.Symbol != "" {
+		var err error
+		if ts, err = declarations(t, outline); err != nil {
+			return "", "", err
+		}
+	}
+	raw, err := view.Read(t.Path, rev)
+	if err != nil {
+		return "", "", err
+	}
+	text, _ := edit.Decode(raw)
+	n := len(edit.Lines(text))
+	var b strings.Builder
+	for i, t := range ts {
+		if i > 0 && !outline { // declarations of one name print as blocks
+			b.WriteString("\n")
+		}
+		var notes []string
+		if blame {
+			from, to, err := t.Lines(n)
+			if err == nil {
+				notes, err = view.Blame(t.Path, rev, from, to)
+			}
+			if err != nil {
+				return "", "", err
+			}
+		}
+		out, err := view.Render(text, t, gutter, notes)
+		if err != nil {
+			return "", "", err
+		}
+		b.WriteString(out)
+	}
+	return b.String(), t.Cut(n), nil
 }
 
 // declarations is what show prints for a target with a symbol, or with outline.

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -62,7 +63,8 @@ func TestRender(t *testing.T) {
 		{name: "line addresses", target: view.Target{Path: "f", From: 1, To: 2}, gutter: "hash", want: "1#" + edit.Hash("a") + "\ta\n2#" + edit.Hash("b") + "\tb\n"},
 		{name: "whole file", target: view.Target{Path: "f"}, gutter: "line", want: " 1\ta\n 2\tb\n 3\tc\n 4\td\n 5\te\n 6\tf\n 7\tg\n 8\th\n 9\ti\n10\tj\n11\tk\n"},
 		{name: "range at the end", target: view.Target{Path: "f", From: 10, To: 11}, gutter: "line", want: "10\tj\n11\tk\n"},
-		{name: "range past the end", target: view.Target{Path: "f", From: 10, To: 12}, gutter: "line", err: "line 12 is past the end: f has 11 lines"},
+		{name: "range past the end cut at the end", target: view.Target{Path: "f", From: 10, To: 12}, gutter: "line", want: "10\tj\n11\tk\n"},
+		{name: "range starting past the end", target: view.Target{Path: "f", From: 12, To: 14}, gutter: "line", err: "line 12 is past the end: f has 11 lines"},
 		{name: "position context cut at the end", target: view.Target{Path: "f", From: 9, To: 13, Line: 11}, gutter: "line", want: " 9\ti\n10\tj\n11\tk\n"},
 		{name: "position past the end", target: view.Target{Path: "f", From: 10, To: 14, Line: 12}, gutter: "line", err: "line 12 is past the end: f has 11 lines"},
 		{name: "address", target: view.Target{Path: "f", From: 2, To: 2, Line: 2, Hash: edit.Hash("b")}, gutter: "line", want: "2\tb\n"},
@@ -90,24 +92,78 @@ func TestBlame(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "f.txt")
 	require.NoError(t, os.WriteFile(file, []byte("one\ntwo\n"), 0o644))
-	git := func(args ...string) {
+	commit(t, dir)
+	require.NoError(t, os.WriteFile(file, []byte("one\nTWO\n"), 0o644))
+
+	got, err := view.Blame(file, "", 1, 2)
+
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Regexp(t, `^[0-9a-f]{8} Ann               2026-01-0[12]$`, got[0])
+	assert.Regexp(t, `^00000000 Not Committed Yet \d{4}-\d\d-\d\d$`, got[1])
+
+	got, err = view.Blame(file, "HEAD", 1, 2)
+
+	require.NoError(t, err)
+	assert.Regexp(t, `^[0-9a-f]{8} Ann 2026-01-0[12]$`, got[1])
+}
+
+func TestRead(t *testing.T) {
+	repo, outside := t.TempDir(), t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(repo, "sub"), 0o755))
+	file := filepath.Join(repo, "sub", "f.txt")
+	require.NoError(t, os.WriteFile(file, []byte("one\n"), 0o644))
+	commit(t, repo)
+	require.NoError(t, os.WriteFile(file, []byte("ONE\n"), 0o644))
+	notInGit := filepath.Join(outside, "f.txt")
+	require.NoError(t, os.WriteFile(notInGit, []byte("x\n"), 0o644))
+
+	tests := []struct {
+		name, path, rev, want, err string
+	}{
+		{name: "working tree", path: file, want: "ONE\n"},
+		{name: "revision of a file in a subdirectory", path: file, rev: "HEAD", want: "one\n"},
+		{name: "no revision", path: file, rev: "nope", err: "git show nope:" + file + ": "},
+		{name: "file outside git", path: notInGit, rev: "HEAD", err: "git show HEAD:" + notInGit + ": "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := view.Read(tt.path, tt.rev)
+			assert.True(t, strings.HasPrefix(errText(err), tt.err), "error: %v", err) // after the prefix comes what git says
+			assert.Equal(t, tt.want, string(got))
+		})
+	}
+}
+
+// commit makes dir a git repository with its files committed.
+func commit(t *testing.T, dir string) {
+	t.Helper()
+	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"commit", "-q", "-m", "init"}} {
 		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=Ann", "-c", "user.email=a@x", "-c", "commit.gpgsign=false"}, args...)...)
 		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
 			"GIT_AUTHOR_DATE=2026-01-02T12:00:00Z", "GIT_COMMITTER_DATE=2026-01-02T12:00:00Z")
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, string(out))
 	}
-	git("init", "-q")
-	git("add", ".")
-	git("commit", "-q", "-m", "init")
-	require.NoError(t, os.WriteFile(file, []byte("one\nTWO\n"), 0o644))
+}
 
-	got, err := view.Blame(file, 1, 2)
-
-	require.NoError(t, err)
-	require.Len(t, got, 2)
-	assert.Regexp(t, `^[0-9a-f]{8} Ann               2026-01-0[12]$`, got[0])
-	assert.Regexp(t, `^00000000 Not Committed Yet \d{4}-\d\d-\d\d$`, got[1])
+func TestCut(t *testing.T) {
+	tests := []struct {
+		name   string
+		target view.Target
+		want   string
+	}{
+		{name: "range past the end", target: view.Target{Path: "f", From: 9, To: 12}, want: "line 12 is past the end: f has 11 lines, printed 9-11"},
+		{name: "range at the end", target: view.Target{Path: "f", From: 9, To: 11}},
+		{name: "range starting past the end", target: view.Target{Path: "f", From: 12, To: 14}},
+		{name: "position context past the end", target: view.Target{Path: "f", From: 9, To: 13, Line: 11}},
+		{name: "whole file", target: view.Target{Path: "f"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.target.Cut(11))
+		})
+	}
 }
 
 func errText(err error) string {

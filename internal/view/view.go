@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"go/token"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -109,32 +110,68 @@ func Render(text string, t Target, gutter string, blame []string) (string, error
 	return b.String(), nil
 }
 
-// Lines is the 1-based range of t in a file of n lines. A range or position past the end is an error; the context
-// of a position is cut at the end.
+// Lines is the 1-based range of t in a file of n lines. A position or the start of a range past the end is an error;
+// a range and the context of a position are cut at the end.
 func (t Target) Lines(n int) (int, int, error) {
 	switch {
 	case t.From == 0:
 		return 1, n, nil
 	case t.Line > n:
 		return 0, 0, fmt.Errorf("line %d is past the end: %s has %d lines", t.Line, t.Path, n)
-	case t.Line == 0 && t.To > n:
-		return 0, 0, fmt.Errorf("line %d is past the end: %s has %d lines", t.To, t.Path, n)
+	case t.Line == 0 && t.From > n:
+		return 0, 0, fmt.Errorf("line %d is past the end: %s has %d lines", t.From, t.Path, n)
 	}
 	return t.From, min(t.To, n), nil
 }
 
-// Blame annotates lines from..to of path as "<commit> <author> <date>" from git.
-func Blame(path string, from, to int) ([]string, error) {
-	if from > to {
-		return []string{}, nil
+// Cut is the warning that Lines cuts the range t at the end of a file of n lines; "" when it does not.
+func (t Target) Cut(n int) string {
+	if t.Line != 0 || t.To <= n || t.From > n {
+		return ""
 	}
-	cmd := exec.Command("git", "-C", filepath.Dir(path), "blame", "--line-porcelain",
-		"-L", fmt.Sprintf("%d,%d", from, to), "--", filepath.Base(path))
+	return fmt.Sprintf("line %d is past the end: %s has %d lines, printed %d-%d", t.To, t.Path, n, t.From, n)
+}
+
+// Read is the content of path, or of path as it was in the git revision rev when rev is not "".
+func Read(path, rev string) ([]byte, error) {
+	if rev == "" {
+		return os.ReadFile(path)
+	}
+	out, err := git(path, "show", rev+":./"+filepath.Base(path))
+	if err != nil {
+		return nil, fmt.Errorf("git show %s:%s: %w", rev, path, err)
+	}
+	return out, nil
+}
+
+// git runs git with args in the directory of path and returns its stdout, or its stderr as the error.
+func git(path string, args ...string) ([]byte, error) {
+	cmd := exec.Command("git", append([]string{"-C", filepath.Dir(path)}, args...)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("git blame: %s", strings.TrimSpace(stderr.String()))
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, errors.New(msg)
+		}
+		return nil, err
+	}
+	return out, nil
+}
+
+// Blame annotates lines from..to of path, as it is or as it was in the git revision rev when rev is not "", as
+// "<commit> <author> <date>" from git.
+func Blame(path, rev string, from, to int) ([]string, error) {
+	if from > to {
+		return []string{}, nil
+	}
+	args := []string{"blame", "--line-porcelain", "-L", fmt.Sprintf("%d,%d", from, to)}
+	if rev != "" {
+		args = append(args, rev)
+	}
+	out, err := git(path, append(args, "--", filepath.Base(path))...)
+	if err != nil {
+		return nil, fmt.Errorf("git blame: %w", err)
 	}
 	type entry struct{ commit, author, date string }
 	var entries []entry
