@@ -1,13 +1,15 @@
 ---
 name: catnip
-description: "Use for every file read or edit, by file tools or shell: cat, sed, head/tail, heredoc, python; to find where a Go symbol is declared, used or implemented, read one by name, or rename one."
+description: "Use for every file read or edit and code symbol lookup."
 ---
 
 # catnip
 
 `catnip` reads and edits files in one bash command and chains with `&&`. Every file read and every file edit goes
 through it: in place of the agent's built-in tools for reading and editing files, `cat`, `sed -n`, `head`/`tail`,
-`sed -i`, heredoc into a file and python scripts with `str.replace`. Help for a command: `catnip <command> --help`.
+`sed -i`, heredoc into a file and python scripts with `str.replace`; and in place of grep wherever the question is
+about a symbol of the code: where it is declared, who uses it, what implements it. Help for a command:
+`catnip <command> --help`.
 
 ## View
 
@@ -27,6 +29,34 @@ catnip show cart/cart.go --outline        # the line of each declaration of a Go
 A line address `57#a3f0` is the line number and a hash of its content; edits address lines by it. Lines and columns
 start at 1. A range past the end of the file prints up to its last line and warns on stderr. In a Go file, read a
 function by its name with `::` rather than by guessing its lines, and look at `--outline` before reading the whole file.
+
+## Navigate code (Go)
+
+`def` and `ref` answer by types, not by text, and take a symbol by its name alone: no path, several names in one
+call, one block per name.
+
+| Instead of | Ask |
+|---|---|
+| `grep -n 'func Name' -A30`, reading a file to find a function | `catnip def --body Name` (`Type.Method`, `pkg.Func`) |
+| `grep -rn 'Name'` to find who calls or uses it | `catnip ref Name` |
+| `grep -rn 'A\|B\|C'` over several names | `catnip ref A B C` |
+| grep for the types that implement an interface | `catnip ref Iface.Method`: uses, then `implementations:` |
+
+grep stays for text that is not a symbol (strings, SQL, config keys, comments), for code that is not Go and for code
+at another git revision.
+
+```bash
+catnip def --body Store.Write Cart.Add              # the whole declarations; without --body the doc and signature
+catnip def internal/cart/cart.go:57 s.store.Write   # the symbol at the last word of an expression on line 57
+catnip def internal/cart/cart.go:57#a3f0 Write      # a line address from show; rejected if the line changed
+catnip ref Store.Write Cart.Add                     # uses of each, files with most lines first
+catnip ref --limit 200 Store.Write                  # more than the default 60 lines
+```
+
+A bare name matches the last segment of qualified names: `def` prints every declaration it matches, `ref` refuses a
+name of several declarations and lists their addresses to ask by. Answer lines are
+`path:N#hash: text`: pass `path:N#hash` to `show` as is, `edit` takes the path and `N#hash` apart. When `ref` ends with
+`<n> more lines in <m> files`, raise `--limit`.
 
 ## Edit
 
@@ -70,47 +100,17 @@ EOF
 
 Rewriting an existing file keeps its BOM, line endings and whether it ends with a newline.
 
-## Find a declaration (Go)
-
-Instead of grepping for `func Name`, ask where a symbol is declared: by a position and an expression from its line,
-or by a name. The answer is resolved by types.
-
-```bash
-catnip def internal/cart/cart.go:57 s.store.Write   # the symbol at the last word of the expression
-catnip def internal/cart/cart.go:57#a3f0 Write      # a line address from show; rejected if the line changed
-catnip def internal/cart/cart.go:57:31 Write        # the column picks one of several equal expressions
-catnip def cart.Cart.Add Store                      # names: Func, Type.Method, pkg.Func; a bare name matches any
-catnip def --body Store.Write                       # the whole declaration
-```
-
-Pass a line address of the answer to `show` as is (`catnip show internal/cart/store.go:12#9c41`); `edit` takes
-the path and `12#9c41` apart.
-
-## Find uses and implementations (Go)
-
-Instead of grepping for a name, ask who uses a symbol and who implements an interface or its method. The questions
-are those of `def`; a name must name one declaration, otherwise the error lists their addresses to ask by.
-
-```bash
-catnip ref internal/cart/cart.go:57 s.store.Write   # uses, then "implementations:" for an interface method
-catnip ref --limit 200 Store.Write                  # more than the default 60 lines
-```
-
-Files with most lines come first; several places on a line print as one line. When the answer ends with
-`<n> more lines in <m> files`, raise `--limit`.
-
 ## Rename (Go)
 
-Instead of editing every use by hand, rename a symbol with all its uses in one command. The symbol is given as in
-`def` by a position.
+`rename` takes the symbol as `def` does, by a position.
 
 ```bash
 catnip rename internal/cart/cart.go:57 s.store.Write Put && go test ./...
 ```
 
 Files of every platform (`*_windows.go`) are renamed too, and with an interface method the methods of the types the
-code converts to the interface. A refusal (the name conflicts, the symbol is not of the project) writes nothing; the changed lines and the fixers and checks
-print per file as after `edit`.
+code converts to the interface. A refusal (the name conflicts, the symbol is not of the project) writes nothing;
+the changed lines and the fixers and checks print per file as after `edit`.
 
 ## Exit codes
 
