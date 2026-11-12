@@ -315,7 +315,11 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 	if err != nil {
 		return usageError(err, showHelp, stdout, stderr)
 	}
-	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
+	revSet := false
+	fl.Visit(func(f *flag.Flag) {
+		call.Flags = append(call.Flags, dashed(f.Name))
+		revSet = revSet || f.Name == "rev"
+	})
 	ts := make([]view.Target, len(ops))
 	for i, op := range ops {
 		ts[i], err = view.ParseTarget(op, *context)
@@ -323,6 +327,8 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 		case err != nil:
 		case *outline && (ts[i].From != 0 || ts[i].Symbol != ""):
 			err = fmt.Errorf("--outline %s: want a path without lines or a symbol", op)
+		case revSet && (*rev == "" || strings.HasPrefix(*rev, "-")):
+			err = fmt.Errorf("--rev %q: want a git revision", *rev)
 		case *rev != "" && (*outline || ts[i].Symbol != ""):
 			err = fmt.Errorf("--rev %s %s: ::<symbol> and --outline read the working tree", *rev, op)
 		}
@@ -332,6 +338,12 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 	}
 	call.File = ts[0].Path
 	code := ok
+	prefix := func(i int) string { // with several targets, what a target says on stderr starts with the target
+		if len(ts) > 1 {
+			return ops[i] + ": "
+		}
+		return ""
+	}
 	for i, t := range ts {
 		if len(ts) > 1 {
 			if i > 0 {
@@ -339,33 +351,33 @@ func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 			}
 			fmt.Fprintln(stdout, ops[i])
 		}
-		out, err := showTarget(t, *rev, *outline, *gutter, *blame, stderr)
+		out, warning, err := showTarget(t, *rev, *outline, *gutter, *blame)
 		if err != nil {
-			if len(ts) > 1 {
-				err = fmt.Errorf("%s: %w", ops[i], err)
-			}
-			fmt.Fprintln(stderr, err)
+			fmt.Fprintln(stderr, prefix(i)+err.Error())
 			code = notApplied
 			continue
+		}
+		if warning != "" {
+			fmt.Fprintln(stderr, prefix(i)+warning)
 		}
 		fmt.Fprint(stdout, out)
 	}
 	return code
 }
 
-// showTarget is what show prints for one target, the file as it was in the git revision rev when rev is not "";
-// the warning that a range is cut at the end of the file goes to stderr.
-func showTarget(t view.Target, rev string, outline bool, gutter string, blame bool, stderr io.Writer) (string, error) {
+// showTarget is what show prints for one target, the file as it was in the git revision rev when rev is not "", and
+// the warning that its range is cut at the end of the file.
+func showTarget(t view.Target, rev string, outline bool, gutter string, blame bool) (string, string, error) {
 	ts := []view.Target{t}
 	if outline || t.Symbol != "" {
 		var err error
 		if ts, err = declarations(t, outline); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	raw, err := view.Read(t.Path, rev)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	text, _ := edit.Decode(raw)
 	n := len(edit.Lines(text))
@@ -381,19 +393,16 @@ func showTarget(t view.Target, rev string, outline bool, gutter string, blame bo
 				notes, err = view.Blame(t.Path, rev, from, to)
 			}
 			if err != nil {
-				return "", err
+				return "", "", err
 			}
 		}
 		out, err := view.Render(text, t, gutter, notes)
 		if err != nil {
-			return "", err
-		}
-		if w := t.Cut(n); w != "" {
-			fmt.Fprintln(stderr, w)
+			return "", "", err
 		}
 		b.WriteString(out)
 	}
-	return b.String(), nil
+	return b.String(), t.Cut(n), nil
 }
 
 // declarations is what show prints for a target with a symbol, or with outline.

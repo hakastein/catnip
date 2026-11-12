@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -91,16 +92,7 @@ func TestBlame(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "f.txt")
 	require.NoError(t, os.WriteFile(file, []byte("one\ntwo\n"), 0o644))
-	git := func(args ...string) {
-		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=Ann", "-c", "user.email=a@x", "-c", "commit.gpgsign=false"}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
-			"GIT_AUTHOR_DATE=2026-01-02T12:00:00Z", "GIT_COMMITTER_DATE=2026-01-02T12:00:00Z")
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, string(out))
-	}
-	git("init", "-q")
-	git("add", ".")
-	git("commit", "-q", "-m", "init")
+	commit(t, dir)
 	require.NoError(t, os.WriteFile(file, []byte("one\nTWO\n"), 0o644))
 
 	got, err := view.Blame(file, "", 1, 2)
@@ -114,15 +106,45 @@ func TestBlame(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Regexp(t, `^[0-9a-f]{8} Ann 2026-01-0[12]$`, got[1])
+}
 
-	old, err := view.Read(file, "HEAD")
+func TestRead(t *testing.T) {
+	repo, outside := t.TempDir(), t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(repo, "sub"), 0o755))
+	file := filepath.Join(repo, "sub", "f.txt")
+	require.NoError(t, os.WriteFile(file, []byte("one\n"), 0o644))
+	commit(t, repo)
+	require.NoError(t, os.WriteFile(file, []byte("ONE\n"), 0o644))
+	notInGit := filepath.Join(outside, "f.txt")
+	require.NoError(t, os.WriteFile(notInGit, []byte("x\n"), 0o644))
 
-	require.NoError(t, err)
-	assert.Equal(t, "one\ntwo\n", string(old))
+	tests := []struct {
+		name, path, rev, want, err string
+	}{
+		{name: "working tree", path: file, want: "ONE\n"},
+		{name: "revision of a file in a subdirectory", path: file, rev: "HEAD", want: "one\n"},
+		{name: "no revision", path: file, rev: "nope", err: "git show nope:" + file + ": "},
+		{name: "file outside git", path: notInGit, rev: "HEAD", err: "git show HEAD:" + notInGit + ": "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := view.Read(tt.path, tt.rev)
+			assert.True(t, strings.HasPrefix(errText(err), tt.err), "error: %v", err) // after the prefix comes what git says
+			assert.Equal(t, tt.want, string(got))
+		})
+	}
+}
 
-	_, err = view.Read(file, "nope")
-
-	assert.ErrorContains(t, err, "git show nope:"+file)
+// commit makes dir a git repository with its files committed.
+func commit(t *testing.T, dir string) {
+	t.Helper()
+	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"commit", "-q", "-m", "init"}} {
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=Ann", "-c", "user.email=a@x", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
+			"GIT_AUTHOR_DATE=2026-01-02T12:00:00Z", "GIT_COMMITTER_DATE=2026-01-02T12:00:00Z")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
 }
 
 func TestCut(t *testing.T) {

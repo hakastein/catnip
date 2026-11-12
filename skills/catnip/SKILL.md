@@ -19,7 +19,7 @@ catnip show src/a.php:57:12               # a position with a column, as LSP-bas
 catnip show --gutter line src/a.php:40-80 # line numbers only; --gutter none prints only the text
 catnip show --blame src/a.php:57          # commit, author and date of every line
 catnip show src/a.php:40-80 src/b.php     # several targets, a block each after its target line
-catnip show --rev main src/a.php:40-80   # the file as it was in a git revision
+catnip show --rev main src/a.php:40-80    # the file as it was in a git revision
 catnip show cart/cart.go::Cart.Add        # a Go declaration by name, from its doc comment to its end
 catnip show cart/cart.go --outline        # the line of each declaration of a Go file
 ```
@@ -117,6 +117,6 @@ print per file as after `edit`.
 | Code | Meaning |
 |---|---|
 | 0 | written, checks passed |
-| 1 | nothing written, `rename` refused; `def`, `ref`: a question has no answer |
+| 1 | nothing written, `rename` refused; `def`, `ref`: a question has no answer; `show`: a target not printed, the others print |
 | 2 | bad arguments or config |
 | 3 | written, but a check failed or the file was written in part; `rename`: stderr ends with the files written |
