@@ -92,6 +92,7 @@ func TestRun(t *testing.T) {
 			after:   "B\n",
 			tail:    "up: fixed\np/a.txt:1\n-\tb\n+\tB\n",
 		},
+		{name: "checks skipped", project: `{"*.txt": {"fix": {"up": "printf 'B\\n' > a.txt"}, "check": {"no": "false"}}}`, before: "a\n", args: []string{"write", "--skip-checks", "p/a.txt"}, stdin: "b\n", code: ok, after: "b\n"},
 		{name: "stats with an unknown flag", project: `{}`, before: "a\n", args: []string{"stats", "--all"}, code: badUsage, after: "a\n"},
 		{name: "stats without a database", project: `{}`, before: "a\n", args: []string{"stats"}, code: notApplied, after: "a\n"},
 		{name: "help of catnip", project: `{}`, before: "a\n", args: []string{"--help"}, code: ok, after: "a\n", tail: usage},

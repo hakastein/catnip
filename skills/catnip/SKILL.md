@@ -88,7 +88,9 @@ catnip edit src/a.php \
 After writing, catnip prints the changed lines (`path:line`, `-`/`+`) and runs the fixers and checks from the
 config, each under its name: `<name>: passed`; `<name>: fixed` if a fixer changed the file (`--show-fix-diff`
 before the path shows what it changed); `<name>: failed` and the command's output. A change of BOM or line endings
-is reported on a line of its own.
+is reported on a line of its own. `--skip-checks` before the path runs no fixers and checks: use it for an
+intermediate state that cannot pass them yet (a refactoring in several steps, an import before its use), not to get
+past a failure.
 
 ## New file
 
