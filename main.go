@@ -28,14 +28,14 @@ import (
 
 // Exit codes.
 const (
-	ok          = 0 // done, checks passed
+	ok          = 0 // done, checks passed or skipped
 	notApplied  = 1 // nothing written
 	badUsage    = 2 // bad arguments or config
 	checkFailed = 3 // written, but a fixer or check failed or the file was written in part
 )
 
 const exitCodes = `
-exit: 0 done, checks passed; 1 nothing written; 2 bad arguments or config;
+exit: 0 done, checks passed or skipped; 1 nothing written; 2 bad arguments or config;
   3 written, but a fixer or check failed or the file was written in part
 `
 
@@ -83,7 +83,8 @@ catnip stats
   open a report on recorded catnip calls in the browser
 
 After edit, write and rename catnip prints what changed and runs the fixers and checks
-configured for the file. catnip <command> --help prints all flags of the command.
+configured for the file; --skip-checks before the path of edit and write skips them.
+catnip <command> --help prints all flags of the command.
 ` + exitCodes
 
 const showHelp = `catnip show prints a file, a range of its lines, the lines around a position or the
@@ -120,21 +121,23 @@ const editHelp = `catnip edit applies edits to one file: all of them, or none if
 Every edit addresses the file as it was before the command. catnip prints the changed lines, then
 runs the fixers and checks configured for the file.
 
-usage: catnip edit [--show-fix-diff] <path> <edit>...
+usage: catnip edit [flags] <path> <edit>...
 
 edits:
 ` + editOps + `
 flags:
   --show-fix-diff  also print what each fixer changed
+  --skip-checks    run no fixers and checks: for a file not meant to pass them yet
 ` + exitCodes
 
 const writeHelp = `catnip write writes stdin to a file, creating it if missing. Overwriting keeps the BOM, line
 endings and final newline of the file. Then catnip runs the fixers and checks configured for it.
 
-usage: catnip write [--show-fix-diff] <path> < content
+usage: catnip write [flags] <path> < content
 
 flags:
   --show-fix-diff  also print what each fixer changed
+  --skip-checks    run no fixers and checks: for a file not meant to pass them yet
 ` + exitCodes
 
 const defHelp = `catnip def prints where a Go symbol is declared: its doc comment and signature, each line as
@@ -420,7 +423,7 @@ func declarations(t view.Target, outline bool) ([]view.Target, error) {
 }
 
 func editCmd(args []string, stdout, stderr io.Writer, call *stats.Call) int {
-	showFixDiff, args, err := fixFlags("edit", args, call)
+	showFixDiff, skipChecks, args, err := fixFlags("edit", args, call)
 	if err == nil && (len(args) == 0 || strings.HasPrefix(args[0], "--")) {
 		err = errors.New("edit needs the file path first")
 	}
@@ -469,16 +472,17 @@ func editCmd(args []string, stdout, stderr io.Writer, call *stats.Call) int {
 		fmt.Fprintln(stdout, "no changes")
 		return ok
 	}
-	return commit(cfg, path, before, after, showFixDiff, stdout, stderr)
+	return commit(cfg, path, before, after, showFixDiff, skipChecks, stdout, stderr)
 }
 
 // fixFlags parses the flags of edit and write, which come before the path, and adds them to call.
-func fixFlags(name string, args []string, call *stats.Call) (showFixDiff bool, rest []string, err error) {
+func fixFlags(name string, args []string, call *stats.Call) (showFixDiff, skipChecks bool, rest []string, err error) {
 	fl := newFlags(name)
 	fl.BoolVar(&showFixDiff, "show-fix-diff", false, "also print what each fixer changed")
+	fl.BoolVar(&skipChecks, "skip-checks", false, "run no fixers and checks")
 	err = fl.Parse(args)
 	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
-	return showFixDiff, fl.Args(), err
+	return showFixDiff, skipChecks, fl.Args(), err
 }
 
 // dashed is a flag name as usage spells it.
@@ -490,7 +494,7 @@ func dashed(name string) string {
 }
 
 func write(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.Call) int {
-	showFixDiff, args, err := fixFlags("write", args, call)
+	showFixDiff, skipChecks, args, err := fixFlags("write", args, call)
 	if err == nil && len(args) != 1 {
 		err = fmt.Errorf("write takes one path, got %d", len(args))
 	}
@@ -517,12 +521,12 @@ func write(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats
 	if old != nil {
 		data = edit.Keep(old, data)
 	}
-	return commit(cfg, path, old, data, showFixDiff, stdout, stderr)
+	return commit(cfg, path, old, data, showFixDiff, skipChecks, stdout, stderr)
 }
 
-// commit writes the file, prints its diff and runs its fixers and checks; a fixer's own diff only with showFixDiff.
-// before is nil for a new file.
-func commit(cfg *config.Config, path string, before, after []byte, showFixDiff bool, stdout, stderr io.Writer) int {
+// commit writes the file, prints its diff and, unless skipChecks, runs its fixers and checks; a fixer's own diff only
+// with showFixDiff. before is nil for a new file.
+func commit(cfg *config.Config, path string, before, after []byte, showFixDiff, skipChecks bool, stdout, stderr io.Writer) int {
 	if err := store.Write(path, after); err != nil {
 		fmt.Fprintln(stderr, err)
 		if errors.Is(err, store.ErrPartial) {
@@ -536,7 +540,7 @@ func commit(cfg *config.Config, path string, before, after []byte, showFixDiff b
 	} else {
 		fmt.Fprint(stdout, edit.Diff(path, before, after))
 	}
-	if !check.Report(cfg, path, showFixDiff, stdout, stderr) {
+	if !skipChecks && !check.Report(cfg, path, showFixDiff, stdout, stderr) {
 		return checkFailed
 	}
 	return ok
