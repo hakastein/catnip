@@ -5,11 +5,15 @@ description: "Use for every file read or edit and code symbol lookup."
 
 # catnip
 
-`catnip` reads and edits files in one bash command and chains with `&&`. Every file read and every file edit goes
-through it: in place of the agent's built-in tools for reading and editing files, `cat`, `sed -n`, `head`/`tail`,
-`sed -i`, heredoc into a file and python scripts with `str.replace`; and in place of grep wherever the question is
-about a symbol of the code: where it is declared, who uses it, what implements it. Help for a command:
-`catnip <command> --help`.
+Use `catnip` for every file read and edit, including bulk changes, scratch files and test mutations.
+Use `def`/`ref` for Go symbol lookup. Help: `catnip <command> --help`.
+
+Catnip validates expected text or line hashes before writing, applies all edits to a file or none, prints the diff
+and runs configured fixers and checks.
+
+Do not edit files with Python, including persistent helpers and wrappers around catnip, or with built-in file
+tools, `sed -i`, `perl -i` or direct redirects. Writing an editing script with `catnip write` does not make its
+later writes compliant. Use the Bash recipes below.
 
 ## View
 
@@ -35,15 +39,12 @@ function by its name with `::` rather than by guessing its lines, and look at `-
 `def` and `ref` answer by types, not by text, and take a symbol by its name alone: no path, several names in one
 call, one block per name.
 
-| Instead of | Ask |
+| Task | Command |
 |---|---|
-| `grep -n 'func Name' -A30`, reading a file to find a function | `catnip def --body Name` (`Type.Method`, `pkg.Func`) |
-| `grep -rn 'Name'` to find who calls or uses it | `catnip ref Name` |
-| `grep -rn 'A\|B\|C'` over several names | `catnip ref A B C` |
-| grep for the types that implement an interface | `catnip ref Iface.Method`: uses, then `implementations:` |
-
-grep stays for text that is not a symbol (strings, SQL, config keys, comments), for code that is not Go and for code
-at another git revision.
+| Read a declaration's body | `catnip def --body Name` (`Type.Method`, `pkg.Func`) |
+| Find uses of a symbol | `catnip ref Name` |
+| Find uses of several symbols | `catnip ref A B C` |
+| Find implementations of an interface method | `catnip ref Iface.Method`: uses, then `implementations:` |
 
 ```bash
 catnip def --body Store.Write Cart.Add              # the whole declarations; without --body the doc and signature
@@ -90,7 +91,37 @@ config, each under its name: `<name>: passed`; `<name>: fixed` if a fixer change
 before the path shows what it changed); `<name>: failed` and the command's output. A change of BOM or line endings
 is reported on a line of its own. `--skip-checks` before the path runs no fixers and checks: use it for an
 intermediate state that cannot pass them yet (a refactoring in several steps, an import before its use), not to get
-past a failure.
+past a failure. Complete the related edits, then run the project's checks on the complete state.
+
+### Bulk changes without an editing script
+
+```bash
+for file in src/a.php src/b.php; do
+  catnip edit "$file" --replace 'oldName(' 'newName(' --count 2 || exit
+done
+```
+
+### Append to the end
+
+Non-empty file:
+
+```bash
+last=$(catnip show notes.md | tail -n 1 | cut -f 1)
+catnip edit notes.md --after "$last" 'Another paragraph.'
+```
+
+### Multiline text with quotes, backticks or dollar signs
+
+```bash
+NEW=$(cat <<'EOF'
+const message = `it's ${value}`;
+EOF
+)
+catnip edit src/message.js --replace 'const message = "old";' "$NEW"
+```
+
+Command substitution strips trailing newlines. To preserve them, append `_` inside the substitution
+and pass `${NEW%_}`.
 
 ## New file
 
