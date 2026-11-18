@@ -5,11 +5,19 @@ description: "Use for every file read or edit and code symbol lookup."
 
 # catnip
 
-`catnip` reads and edits files in one bash command and chains with `&&`. Every file read and every file edit goes
-through it: in place of the agent's built-in tools for reading and editing files, `cat`, `sed -n`, `head`/`tail`,
-`sed -i`, heredoc into a file and python scripts with `str.replace`; and in place of grep wherever the question is
-about a symbol of the code: where it is declared, who uses it, what implements it. Help for a command:
-`catnip <command> --help`.
+`catnip` reads and edits files in one bash command and chains with `&&`. Every file read and edit goes through
+it, including bulk changes, scratch files and test mutations. Use `def`/`ref` instead of grep for Go symbol lookup;
+grep stays for other text searches. Command help: `catnip <command> --help`.
+
+**Use catnip as the editor, not an editing program of your own.** It checks the expected text or line hashes before
+writing, applies all edits to a file or none, prints the diff, preserves the file's text format and runs configured
+fixers and checks. You do not need a read/count/assert/replace/write helper to get those safeguards.
+
+Do not use Python to prepare or apply file edits: no inline rewrites, editing scripts, persistent helpers or
+Python wrappers around catnip. Creating an editing script with `catnip write` does not make its later writes
+compliant. Use the Bash recipes below instead. Python for calculations, data analysis and running tests is fine.
+The same file-editing rule replaces built-in file tools, `sed -i`, `perl -i` and redirects into files; a heredoc
+that supplies stdin to `catnip write` is fine.
 
 ## View
 
@@ -90,7 +98,51 @@ config, each under its name: `<name>: passed`; `<name>: fixed` if a fixer change
 before the path shows what it changed); `<name>: failed` and the command's output. A change of BOM or line endings
 is reported on a line of its own. `--skip-checks` before the path runs no fixers and checks: use it for an
 intermediate state that cannot pass them yet (a refactoring in several steps, an import before its use), not to get
-past a failure.
+past a failure. Complete the related edits, then run the project's checks on the complete state.
+
+### Bulk changes without an editing script
+
+Put all independent edits to one file in one `catnip edit`, as above. Repeat it in a Bash loop for several files:
+
+```bash
+for file in src/a.php src/b.php; do
+  catnip edit "$file" --replace 'oldName(' 'newName(' --count 2 || exit
+done
+```
+
+The count is an expectation, not a guessed value to make the command pass. The loop stops on failure; atomicity
+is per file, not across the loop. For a Go symbol rename, use `catnip rename` instead of textual replacements.
+For matches with different text, read them with `show` and group exact `--replace` or addressed `--lines` edits;
+a regex rewrite is not needed to replace a known block. For an incomplete cross-file refactoring, use
+`catnip edit --skip-checks <path> <edit>...`, then check the complete result.
+
+### Append to the end
+
+For a non-empty file, take its last address from `show` and insert after it:
+
+```bash
+last=$(catnip show notes.md | tail -n 1 | cut -f 1)
+catnip edit notes.md --after "$last" 'Another paragraph.'
+```
+
+For an empty file, use `catnip write`.
+
+### Multiline text with quotes, backticks or dollar signs
+
+A quoted heredoc into a Bash variable keeps the text literal; quote the variable when passing it to catnip:
+
+```bash
+NEW=$(cat <<'EOF'
+const message = `it's ${value}`;
+EOF
+)
+catnip edit src/message.js --replace 'const message = "old";' "$NEW"
+```
+
+Use the same variable with `--lines` for a whole block. The command substitution removes trailing newlines;
+when those newlines are part of an exact replacement, append a sentinel inside the substitution and remove it
+with `${NEW%_}` before passing the value. For a whole new file or a complete rewrite, feed the quoted heredoc
+directly to `catnip write` instead.
 
 ## New file
 
