@@ -79,8 +79,8 @@ catnip edit src/a.php \
   block is unchanged, use `--replace` with its full text.
 - `--after LINE#HASH NEW`, `--before LINE#HASH NEW` insert whole lines after or before the line; if it has changed,
   the edit is rejected.
-- NEW of `--lines`, `--after` and `--before` is lines: a line break at its end adds an empty line. An empty NEW
-  deletes the lines or inserts one empty line.
+- A line break at the end of NEW of `--lines`, `--after` and `--before` only ends its last line: an empty line after
+  the text is `$'text\n\n'`, one empty line alone is `$'\n'`.
 - Every edit addresses the original content of the file: line numbers from `show` hold for the whole command;
   overlapping edits are an error.
 - If any edit does not match, the file is not written, and the error names the reason: the matching lines, the

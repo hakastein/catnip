@@ -231,7 +231,7 @@ func TestApply(t *testing.T) {
 		{
 			name: "replace an unterminated last line",
 			file: "a\nb",
-			ops:  []edit.Op{{Lines: lines(2, "b", 2, "b"), New: "B"}},
+			ops:  []edit.Op{{Lines: lines(2, "b", 2, "b"), New: "B\n"}},
 			want: "a\nB",
 		},
 		{
@@ -293,21 +293,9 @@ func TestApply(t *testing.T) {
 			file: "a\nb\nc\n",
 			ops: []edit.Op{
 				{Insert: after(1, "a"), New: "a2\na3"},
-				{Insert: before(3, "c"), New: "c0"},
+				{Insert: before(3, "c"), New: "c0\n"},
 			},
 			want: "a\na2\na3\nb\nc0\nc\n",
-		},
-		{
-			name: "a line break at the end of the new text starts an empty line",
-			file: "a\nb\nc\n",
-			ops:  []edit.Op{{Insert: after(1, "a"), New: "x\n"}, {Lines: lines(3, "c", 3, "c"), New: "C\n"}},
-			want: "a\nx\n\nb\nC\n\n",
-		},
-		{
-			name: "an empty insertion is one empty line",
-			file: "a\nb\n",
-			ops:  []edit.Op{{Insert: before(2, "b"), New: ""}},
-			want: "a\n\nb\n",
 		},
 		{
 			name: "insert before the first line and after the last",
@@ -318,7 +306,7 @@ func TestApply(t *testing.T) {
 		{
 			name: "insert after an unterminated last line keeps it unterminated",
 			file: "a\nb",
-			ops:  []edit.Op{{Insert: after(2, "b"), New: "c"}},
+			ops:  []edit.Op{{Insert: after(2, "b"), New: "c\n"}},
 			want: "a\nb\nc",
 		},
 		{
@@ -358,7 +346,7 @@ func TestApply(t *testing.T) {
 		{
 			name: "an empty line after an unterminated last line ends with a line break",
 			file: "a\nb",
-			ops:  []edit.Op{{Insert: after(2, "b"), New: ""}},
+			ops:  []edit.Op{{Insert: after(2, "b"), New: "\n"}},
 			want: "a\nb\n\n",
 		},
 		{
@@ -376,14 +364,14 @@ func TestApply(t *testing.T) {
 		{
 			name: "an unterminated last line replaced with lines ending with an empty one",
 			file: "a\nb",
-			ops:  []edit.Op{{Lines: lines(2, "b", 2, "b"), New: "y\n"}},
+			ops:  []edit.Op{{Lines: lines(2, "b", 2, "b"), New: "y\n\n"}},
 			want: "a\ny\n\n",
 		},
 		{
-			name: "an unterminated last line replaced with empty lines",
+			name: "an unterminated last line replaced with an empty line",
 			file: "a\nb",
 			ops:  []edit.Op{{Lines: lines(2, "b", 2, "b"), New: "\n"}},
-			want: "a\n\n\n",
+			want: "a\n\n",
 		},
 		{
 			name: "two insertions after an unterminated last line",
@@ -394,8 +382,14 @@ func TestApply(t *testing.T) {
 		{
 			name: "an insertion after an empty line inserted after an unterminated last line",
 			file: "a\nb",
-			ops:  []edit.Op{{Insert: after(2, "b"), New: ""}, {Insert: after(2, "b"), New: "z"}},
+			ops:  []edit.Op{{Insert: after(2, "b"), New: "\n"}, {Insert: after(2, "b"), New: "z"}},
 			want: "a\nb\n\nz",
+		},
+		{
+			name: "insert in place of the deleted only line",
+			file: "b",
+			ops:  []edit.Op{{Lines: lines(1, "b", 1, "b")}, {Insert: after(1, "b"), New: "z"}},
+			want: "z",
 		},
 		{
 			name: "a deleted unterminated last line after an empty line keeps it",
@@ -406,31 +400,19 @@ func TestApply(t *testing.T) {
 		{
 			name: "an empty line inserted in place of a deleted unterminated last line",
 			file: "a\nb",
-			ops:  []edit.Op{{Lines: lines(2, "b", 2, "b")}, {Insert: before(2, "b"), New: "x\n"}},
+			ops:  []edit.Op{{Lines: lines(2, "b", 2, "b")}, {Insert: before(2, "b"), New: "x\n\n"}},
 			want: "a\nx\n\n",
 		},
 		{
 			name: "a replaced line ending with an empty one before a deleted unterminated last line",
 			file: "a\nb",
-			ops:  []edit.Op{{Lines: lines(2, "b", 2, "b")}, {Lines: lines(1, "a", 1, "a"), New: "A\n"}},
+			ops:  []edit.Op{{Lines: lines(2, "b", 2, "b")}, {Lines: lines(1, "a", 1, "a"), New: "A\n\n"}},
 			want: "A\n\n",
-		},
-		{
-			name: "a line break at the end of the new text in a CRLF file",
-			file: "a\r\nb",
-			ops:  []edit.Op{{Insert: after(1, "a"), New: "x\n"}, {Insert: after(2, "b"), New: ""}},
-			want: "a\r\nx\r\n\r\nb\r\n\r\n",
-		},
-		{
-			name: "insert in place of the deleted only line",
-			file: "b",
-			ops:  []edit.Op{{Lines: lines(1, "b", 1, "b")}, {Insert: after(1, "b"), New: "z"}},
-			want: "z",
 		},
 		{
 			name: "lines ending with an empty one after an unterminated last line",
 			file: "a\nb",
-			ops:  []edit.Op{{Insert: after(2, "b"), New: "x\n"}},
+			ops:  []edit.Op{{Insert: after(2, "b"), New: "x\n\n"}},
 			want: "a\nb\nx\n\n",
 		},
 		{

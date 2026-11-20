@@ -64,6 +64,9 @@ func ParseArgs(args []string) ([]Op, error) {
 			if err != nil {
 				return nil, err
 			}
+			if args[i+2] == "" {
+				return nil, fmt.Errorf("%s: empty NEW inserts nothing", typed(args[i:i+3]))
+			}
 			ops = append(ops, Op{Insert: &Anchor{Line: r.From, Hash: r.FromHash, After: name == "--after"}, New: args[i+2]})
 			i += 3
 		case "--count":
