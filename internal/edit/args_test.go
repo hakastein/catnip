@@ -67,6 +67,8 @@ func TestParseArgs(t *testing.T) {
 			},
 		},
 		{name: "no path", args: []string{"--skip-checks"}, err: "edit needs the file path first"},
+		{name: "path after --", args: []string{"--", "-a.txt", "--replace", "a", "b"}, want: edit.Args{Path: "-a.txt", Ops: []edit.Op{{Old: "a", New: "b", Count: 1}}}},
+		{name: "-- after the path", args: []string{"a.txt", "--replace", "a", "b", "--", "--skip-checks"}, err: `unexpected "--": want --replace, --lines, --after or --before`},
 		{name: "edit before the path", args: []string{"--replace", "a", "b", "a.txt"}, err: "--replace before the path: edit needs the file path first"},
 		{name: "help in place of an edit", args: []string{"a.txt", "--replace", "--help", "b", "--help"}, err: "flag: help requested"},
 	}

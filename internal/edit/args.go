@@ -83,6 +83,12 @@ func ParseArgs(args []string) (Args, error) {
 			i += 3
 		case "--count":
 			return Args{}, fmt.Errorf("--count goes right after a --replace")
+		case "--": // the path follows, also when it starts with "-"
+			if a.Path != "" || i+1 == len(args) {
+				return Args{}, fmt.Errorf("unexpected %q: want --replace, --lines, --after or --before", name)
+			}
+			a.Path = args[i+1]
+			i += 2
 		case "-h", "--help":
 			return Args{}, flag.ErrHelp
 		default:

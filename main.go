@@ -129,7 +129,7 @@ usage: catnip edit [flags] <path> <edit>...
 
 edits:
 ` + editOps + `
-flags, before the path or between the edits:
+flags, before or after the path and between the edits:
   --show-fix-diff  also print what each fixer changed
   --skip-checks    run no fixers and checks: for a file not meant to pass them yet
 ` + exitCodes
@@ -257,30 +257,28 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.C
 		PersistentPreRun: func(c *cobra.Command, _ []string) {
 			c.Flags().Visit(func(f *pflag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
 		},
-		Run: func(*cobra.Command, []string) {
+		Run: func(_ *cobra.Command, args []string) {
+			if len(args) > 0 {
+				fmt.Fprintf(stderr, "unknown command %q\n", args[0])
+			}
 			fmt.Fprint(stderr, usage)
 			code = badUsage
 		},
 	}
-	root.SetHelpFunc(func(_ *cobra.Command, args []string) { // catnip --help <command> asks for the help of the command
-		for _, a := range args {
-			if h, found := helps[a]; found {
-				fmt.Fprint(stdout, h)
-				return
-			}
-		}
-		fmt.Fprint(stdout, usage)
-	})
-	root.SetHelpCommand(&cobra.Command{Use: "help", Run: func(_ *cobra.Command, args []string) {
-		if len(args) == 0 {
+	help := func(args []string) { // the help of the command named first in args, without one of catnip
+		i := slices.IndexFunc(args, func(a string) bool { return !strings.HasPrefix(a, "-") })
+		switch {
+		case i < 0:
 			fmt.Fprint(stdout, usage)
-		} else if h, found := helps[args[0]]; found {
-			fmt.Fprint(stdout, h)
-		} else {
-			fmt.Fprintf(stderr, "unknown command %q\n%s", args[0], usage)
+		case helps[args[i]] != "":
+			fmt.Fprint(stdout, helps[args[i]])
+		default:
+			fmt.Fprintf(stderr, "unknown command %q\n%s", args[i], usage)
 			code = badUsage
 		}
-	}})
+	}
+	root.SetHelpFunc(func(_ *cobra.Command, args []string) { help(args) })
+	root.SetHelpCommand(&cobra.Command{Use: "help", Run: func(_ *cobra.Command, args []string) { help(args) }})
 	for name, command := range commands {
 		c := &cobra.Command{Use: name, DisableFlagParsing: name == "edit"} // edit.ParseArgs finds the flags of edit among its edits
 		body := command(c.Flags(), stdin, stdout, stderr, call)
