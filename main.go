@@ -24,6 +24,8 @@ import (
 	"github.com/hakastein/catnip/internal/stats"
 	"github.com/hakastein/catnip/internal/store"
 	"github.com/hakastein/catnip/internal/view"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // Exit codes.
@@ -84,7 +86,8 @@ catnip stats
   open a report on recorded catnip calls in the browser
 
 After edit, write and rename catnip prints what changed and runs the fixers and checks
-configured for the file; --skip-checks before the path of edit and write skips them.
+configured for the file; --skip-checks of edit and write skips them.
+A command takes its flags anywhere after its name.
 catnip <command> --help prints all flags of the command.
 ` + exitCodes
 
@@ -126,7 +129,7 @@ usage: catnip edit [flags] <path> <edit>...
 
 edits:
 ` + editOps + `
-flags:
+flags, before the path or between the edits:
   --show-fix-diff  also print what each fixer changed
   --skip-checks    run no fixers and checks: for a file not meant to pass them yet
 ` + exitCodes
@@ -237,40 +240,66 @@ func main() {
 	os.Exit(code)
 }
 
+// command declares its flags in fl and returns its run, which takes the operands and gives the exit code.
+type command func(fl *pflag.FlagSet, stdin io.Reader, stdout, stderr io.Writer, call *stats.Call) func(args []string) int
+
+var commands = map[string]command{"show": show, "edit": editCmd, "write": write, "def": def, "ref": ref, "rename": rename, "stats": statsCmd}
+
 // run runs the command in args and fills in the file and flags of call.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.Call) int {
-	if len(args) == 0 {
-		fmt.Fprint(stderr, usage)
+	code := ok
+	root := &cobra.Command{
+		Use:               "catnip",
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		TraverseChildren:  true, // a flag before the command is an unknown flag, not the value of one
+		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
+		PersistentPreRun: func(c *cobra.Command, _ []string) {
+			c.Flags().Visit(func(f *pflag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
+		},
+		Run: func(*cobra.Command, []string) {
+			fmt.Fprint(stderr, usage)
+			code = badUsage
+		},
+	}
+	root.SetHelpFunc(func(_ *cobra.Command, args []string) { // catnip --help <command> asks for the help of the command
+		for _, a := range args {
+			if h, found := helps[a]; found {
+				fmt.Fprint(stdout, h)
+				return
+			}
+		}
+		fmt.Fprint(stdout, usage)
+	})
+	root.SetHelpCommand(&cobra.Command{Use: "help", Run: func(_ *cobra.Command, args []string) {
+		if len(args) == 0 {
+			fmt.Fprint(stdout, usage)
+		} else if h, found := helps[args[0]]; found {
+			fmt.Fprint(stdout, h)
+		} else {
+			fmt.Fprintf(stderr, "unknown command %q\n%s", args[0], usage)
+			code = badUsage
+		}
+	}})
+	for name, command := range commands {
+		c := &cobra.Command{Use: name, DisableFlagParsing: name == "edit"} // edit.ParseArgs finds the flags of edit among its edits
+		body := command(c.Flags(), stdin, stdout, stderr, call)
+		c.Run = func(_ *cobra.Command, args []string) { code = body(args) }
+		c.SetHelpFunc(func(*cobra.Command, []string) { fmt.Fprint(stdout, helps[name]) })
+		root.AddCommand(c)
+	}
+	root.SetArgs(append([]string{}, args...)) // not nil: for nil cobra reads os.Args
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	if c, err := root.ExecuteC(); err != nil {
+		help, found := helps[c.Name()]
+		if !found {
+			help = usage
+		}
+		fmt.Fprintf(stderr, "%v\n%s", err, help)
 		return badUsage
 	}
-	switch args[0] {
-	case "show":
-		return show(args[1:], stdout, stderr, call)
-	case "edit":
-		return editCmd(args[1:], stdout, stderr, call)
-	case "write":
-		return write(args[1:], stdin, stdout, stderr, call)
-	case "def":
-		return def(args[1:], stdout, stderr, call)
-	case "ref":
-		return ref(args[1:], stdout, stderr, call)
-	case "rename":
-		return rename(args[1:], stdout, stderr, call)
-	case "stats":
-		return statsCmd(args[1:], stdout, stderr)
-	case "help", "-h", "--help":
-		if len(args) == 1 {
-			fmt.Fprint(stdout, usage)
-			return ok
-		}
-		if h, found := helps[args[1]]; found {
-			fmt.Fprint(stdout, h)
-			return ok
-		}
-		args = args[1:]
-	}
-	fmt.Fprintf(stderr, "unknown command %q\n%s", args[0], usage)
-	return badUsage
+	return code
 }
 
 // usageError prints the help of a command: to stdout when err asks for it (ok), otherwise after err to stderr (badUsage).
@@ -283,90 +312,70 @@ func usageError(err error, help string, stdout, stderr io.Writer) int {
 	return badUsage
 }
 
-// newFlags is a flag set that leaves printing its errors and help to usageError.
-func newFlags(name string) *flag.FlagSet {
-	fl := flag.NewFlagSet(name, flag.ContinueOnError)
-	fl.SetOutput(io.Discard)
-	return fl
-}
-
-func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
-	fl := newFlags("show")
+func show(fl *pflag.FlagSet, _ io.Reader, stdout, stderr io.Writer, call *stats.Call) func([]string) int {
 	gutter := fl.String("gutter", "hash", "before each line: hash (<n>#<hash>), line (<n>) or none")
 	blame := fl.Bool("blame", false, "add git blame of each line")
-	context := fl.Int("C", 5, "lines of context around a position")
+	context := fl.IntP("C", "C", 5, "lines of context around a position")
 	outline := fl.Bool("outline", false, "the line of each declaration of a Go file")
 	rev := fl.String("rev", "", "show the file as it was in this git revision")
-	args = slices.Clone(args) // args shares its array with the recorded argv
-	for i, a := range args {
-		if a == "--" {
-			break
-		}
-		if len(a) > 2 && strings.HasPrefix(a, "-C") && a[2] != '=' {
-			args[i] = "-C=" + a[2:] // -C0 as grep takes it; flag reads it as a flag named C0
-		}
-	}
-	ops, err := operands(fl, args)
-	switch {
-	case err != nil:
-	case !slices.Contains(view.Gutters, *gutter):
-		err = fmt.Errorf("--gutter %q: want one of %s", *gutter, strings.Join(view.Gutters, ", "))
-	case *context < 0:
-		err = fmt.Errorf("-C %d: want 0 or more", *context)
-	case len(ops) == 0:
-		err = errors.New("show takes a path, got none")
-	}
-	if err != nil {
-		return usageError(err, showHelp, stdout, stderr)
-	}
-	revSet := false
-	fl.Visit(func(f *flag.Flag) {
-		call.Flags = append(call.Flags, dashed(f.Name))
-		revSet = revSet || f.Name == "rev"
-	})
-	ts := make([]view.Target, len(ops))
-	for i, op := range ops {
-		ts[i], err = view.ParseTarget(op, *context)
+	return func(ops []string) int {
+		var err error
 		switch {
-		case err != nil:
-		case *outline && (ts[i].From != 0 || ts[i].Symbol != ""):
-			err = fmt.Errorf("--outline %s: want a path without lines or a symbol", op)
-		case revSet && (*rev == "" || strings.HasPrefix(*rev, "-")):
-			err = fmt.Errorf("--rev %q: want a git revision", *rev)
-		case *rev != "" && (*outline || ts[i].Symbol != ""):
-			err = fmt.Errorf("--rev %s %s: ::<symbol> and --outline read the working tree", *rev, op)
+		case !slices.Contains(view.Gutters, *gutter):
+			err = fmt.Errorf("--gutter %q: want one of %s", *gutter, strings.Join(view.Gutters, ", "))
+		case *context < 0:
+			err = fmt.Errorf("-C %d: want 0 or more", *context)
+		case len(ops) == 0:
+			err = errors.New("show takes a path, got none")
 		}
 		if err != nil {
 			return usageError(err, showHelp, stdout, stderr)
 		}
-	}
-	call.File = ts[0].Path
-	code := ok
-	prefix := func(i int) string { // with several targets, what a target says on stderr starts with the target
-		if len(ts) > 1 {
-			return ops[i] + ": "
-		}
-		return ""
-	}
-	for i, t := range ts {
-		if len(ts) > 1 {
-			if i > 0 {
-				fmt.Fprintln(stdout)
+		revSet := fl.Changed("rev")
+		ts := make([]view.Target, len(ops))
+		for i, op := range ops {
+			ts[i], err = view.ParseTarget(op, *context)
+			switch {
+			case err != nil:
+			case *outline && (ts[i].From != 0 || ts[i].Symbol != ""):
+				err = fmt.Errorf("--outline %s: want a path without lines or a symbol", op)
+			case revSet && (*rev == "" || strings.HasPrefix(*rev, "-")):
+				err = fmt.Errorf("--rev %q: want a git revision", *rev)
+			case *rev != "" && (*outline || ts[i].Symbol != ""):
+				err = fmt.Errorf("--rev %s %s: ::<symbol> and --outline read the working tree", *rev, op)
 			}
-			fmt.Fprintln(stdout, ops[i])
+			if err != nil {
+				return usageError(err, showHelp, stdout, stderr)
+			}
 		}
-		out, warning, err := showTarget(t, *rev, *outline, *gutter, *blame)
-		if err != nil {
-			fmt.Fprintln(stderr, prefix(i)+err.Error())
-			code = notApplied
-			continue
+		call.File = ts[0].Path
+		code := ok
+		prefix := func(i int) string { // with several targets, what a target says on stderr starts with the target
+			if len(ts) > 1 {
+				return ops[i] + ": "
+			}
+			return ""
 		}
-		if warning != "" {
-			fmt.Fprintln(stderr, prefix(i)+warning)
+		for i, t := range ts {
+			if len(ts) > 1 {
+				if i > 0 {
+					fmt.Fprintln(stdout)
+				}
+				fmt.Fprintln(stdout, ops[i])
+			}
+			out, warning, err := showTarget(t, *rev, *outline, *gutter, *blame)
+			if err != nil {
+				fmt.Fprintln(stderr, prefix(i)+err.Error())
+				code = notApplied
+				continue
+			}
+			if warning != "" {
+				fmt.Fprintln(stderr, prefix(i)+warning)
+			}
+			fmt.Fprint(stdout, out)
 		}
-		fmt.Fprint(stdout, out)
+		return code
 	}
-	return code
 }
 
 // showTarget is what show prints for one target, the file as it was in the git revision rev when rev is not "", and
@@ -423,67 +432,62 @@ func declarations(t view.Target, outline bool) ([]view.Target, error) {
 	return ts, err
 }
 
-func editCmd(args []string, stdout, stderr io.Writer, call *stats.Call) int {
-	showFixDiff, skipChecks, args, err := fixFlags("edit", args, call)
-	if err == nil && (len(args) == 0 || strings.HasPrefix(args[0], "--")) {
-		err = errors.New("edit needs the file path first")
-	}
-	if err != nil {
-		return usageError(err, editHelp, stdout, stderr)
-	}
-	path := args[0]
-	call.File = path
-	ops, err := edit.ParseArgs(args[1:])
-	if err != nil {
-		return usageError(err, editHelp, stdout, stderr)
-	}
-	for _, op := range ops {
-		switch {
-		case op.Lines != nil:
-			call.Flags = append(call.Flags, "--lines")
-		case op.Insert != nil && op.Insert.After:
-			call.Flags = append(call.Flags, "--after")
-		case op.Insert != nil:
-			call.Flags = append(call.Flags, "--before")
-		case op.Count != 1:
-			call.Flags = append(call.Flags, "--replace", "--count")
-		default:
-			call.Flags = append(call.Flags, "--replace")
+func editCmd(fl *pflag.FlagSet, _ io.Reader, stdout, stderr io.Writer, call *stats.Call) func([]string) int {
+	showFixDiff, skipChecks := fixFlags(fl)
+	return func(args []string) int {
+		a, err := edit.ParseArgs(args)
+		if err == nil {
+			err = fl.Parse(a.Flags)
 		}
-	}
-	cfg, err := config.Load(filepath.Dir(path))
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return badUsage
-	}
-	before, err := os.ReadFile(path)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return notApplied
-	}
-	after, fails := edit.Apply(before, ops)
-	if fails != nil {
-		for _, f := range fails {
-			fmt.Fprintf(stderr, "%s: %s\n", path, f)
+		if err != nil {
+			return usageError(err, editHelp, stdout, stderr)
 		}
-		fmt.Fprintln(stderr, "nothing written")
-		return notApplied
+		fl.Visit(func(f *pflag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
+		path, ops := a.Path, a.Ops
+		call.File = path
+		for _, op := range ops {
+			switch {
+			case op.Lines != nil:
+				call.Flags = append(call.Flags, "--lines")
+			case op.Insert != nil && op.Insert.After:
+				call.Flags = append(call.Flags, "--after")
+			case op.Insert != nil:
+				call.Flags = append(call.Flags, "--before")
+			case op.Count != 1:
+				call.Flags = append(call.Flags, "--replace", "--count")
+			default:
+				call.Flags = append(call.Flags, "--replace")
+			}
+		}
+		cfg, err := config.Load(filepath.Dir(path))
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return badUsage
+		}
+		before, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return notApplied
+		}
+		after, fails := edit.Apply(before, ops)
+		if fails != nil {
+			for _, f := range fails {
+				fmt.Fprintf(stderr, "%s: %s\n", path, f)
+			}
+			fmt.Fprintln(stderr, "nothing written")
+			return notApplied
+		}
+		if string(after) == string(before) {
+			fmt.Fprintln(stdout, "no changes")
+			return ok
+		}
+		return commit(cfg, path, before, after, *showFixDiff, *skipChecks, stdout, stderr)
 	}
-	if string(after) == string(before) {
-		fmt.Fprintln(stdout, "no changes")
-		return ok
-	}
-	return commit(cfg, path, before, after, showFixDiff, skipChecks, stdout, stderr)
 }
 
-// fixFlags parses the flags of edit and write, which come before the path, and adds them to call.
-func fixFlags(name string, args []string, call *stats.Call) (showFixDiff, skipChecks bool, rest []string, err error) {
-	fl := newFlags(name)
-	fl.BoolVar(&showFixDiff, "show-fix-diff", false, "also print what each fixer changed")
-	fl.BoolVar(&skipChecks, "skip-checks", false, "run no fixers and checks")
-	err = fl.Parse(args)
-	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
-	return showFixDiff, skipChecks, fl.Args(), err
+// fixFlags adds the flags of edit and write.
+func fixFlags(fl *pflag.FlagSet) (showFixDiff, skipChecks *bool) {
+	return fl.Bool("show-fix-diff", false, "also print what each fixer changed"), fl.Bool("skip-checks", false, "run no fixers and checks")
 }
 
 // dashed is a flag name as usage spells it.
@@ -494,35 +498,34 @@ func dashed(name string) string {
 	return "--" + name
 }
 
-func write(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.Call) int {
-	showFixDiff, skipChecks, args, err := fixFlags("write", args, call)
-	if err == nil && len(args) != 1 {
-		err = fmt.Errorf("write takes one path, got %d", len(args))
+func write(fl *pflag.FlagSet, stdin io.Reader, stdout, stderr io.Writer, call *stats.Call) func([]string) int {
+	showFixDiff, skipChecks := fixFlags(fl)
+	return func(args []string) int {
+		if len(args) != 1 {
+			return usageError(fmt.Errorf("write takes one path, got %d", len(args)), writeHelp, stdout, stderr)
+		}
+		path := args[0]
+		call.File = path
+		cfg, err := config.Load(filepath.Dir(path))
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return badUsage
+		}
+		data, err := io.ReadAll(stdin)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return notApplied
+		}
+		old, err := os.ReadFile(path)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			fmt.Fprintln(stderr, err)
+			return notApplied
+		}
+		if old != nil {
+			data = edit.Keep(old, data)
+		}
+		return commit(cfg, path, old, data, *showFixDiff, *skipChecks, stdout, stderr)
 	}
-	if err != nil {
-		return usageError(err, writeHelp, stdout, stderr)
-	}
-	path := args[0]
-	call.File = path
-	cfg, err := config.Load(filepath.Dir(path))
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return badUsage
-	}
-	data, err := io.ReadAll(stdin)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return notApplied
-	}
-	old, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		fmt.Fprintln(stderr, err)
-		return notApplied
-	}
-	if old != nil {
-		data = edit.Keep(old, data)
-	}
-	return commit(cfg, path, old, data, showFixDiff, skipChecks, stdout, stderr)
 }
 
 // commit writes the file, prints its diff and, unless skipChecks, runs its fixers and checks; a fixer's own diff only
@@ -547,73 +550,59 @@ func commit(cfg *config.Config, path string, before, after []byte, showFixDiff, 
 	return ok
 }
 
-func def(args []string, stdout, stderr io.Writer, call *stats.Call) int {
-	fl := newFlags("def")
+func def(fl *pflag.FlagSet, _ io.Reader, stdout, stderr io.Writer, call *stats.Call) func([]string) int {
 	body := fl.Bool("body", false, "print the whole declaration")
-	qs, err := questions(fl, args, call)
-	if err != nil {
-		return usageError(err, defHelp, stdout, stderr)
+	return func(args []string) int {
+		qs, err := questions("def", args, call)
+		if err != nil {
+			return usageError(err, defHelp, stdout, stderr)
+		}
+		return navigate(stdout, stderr, func(n *nav.Navigator) int { return answered(n.Def(qs, *body, stdout, stderr)) })
 	}
-	return navigate(stdout, stderr, func(n *nav.Navigator) int { return answered(n.Def(qs, *body, stdout, stderr)) })
 }
 
-func ref(args []string, stdout, stderr io.Writer, call *stats.Call) int {
-	fl := newFlags("ref")
+func ref(fl *pflag.FlagSet, _ io.Reader, stdout, stderr io.Writer, call *stats.Call) func([]string) int {
 	limit := fl.Int("limit", 60, "lines of an answer")
-	qs, err := questions(fl, args, call)
-	if err == nil && *limit < 1 {
-		err = fmt.Errorf("--limit %d: want 1 or more", *limit)
+	return func(args []string) int {
+		qs, err := questions("ref", args, call)
+		if err == nil && *limit < 1 {
+			err = fmt.Errorf("--limit %d: want 1 or more", *limit)
+		}
+		if err != nil {
+			return usageError(err, refHelp, stdout, stderr)
+		}
+		return navigate(stdout, stderr, func(n *nav.Navigator) int { return answered(n.Ref(qs, *limit, stdout, stderr)) })
 	}
-	if err != nil {
-		return usageError(err, refHelp, stdout, stderr)
-	}
-	return navigate(stdout, stderr, func(n *nav.Navigator) int { return answered(n.Ref(qs, *limit, stdout, stderr)) })
 }
 
-func rename(args []string, stdout, stderr io.Writer, call *stats.Call) int {
-	fl := newFlags("rename")
+func rename(fl *pflag.FlagSet, _ io.Reader, stdout, stderr io.Writer, call *stats.Call) func([]string) int {
 	showFixDiff := fl.Bool("show-fix-diff", false, "also print what each fixer changed")
-	ops, err := operands(fl, args)
-	var qs []nav.Question
-	if err == nil && len(ops) != 3 {
-		err = fmt.Errorf("rename %q: want <position> <expression> <new name>", ops)
+	return func(ops []string) int {
+		var qs []nav.Question
+		var err error
+		if len(ops) != 3 {
+			err = fmt.Errorf("rename %q: want <position> <expression> <new name>", ops)
+		}
+		if err == nil {
+			qs, err = nav.Parse("rename", ops[:2])
+		}
+		if err == nil && qs[0].Path == "" {
+			err = fmt.Errorf("rename %q: %s is not a position <path>:<line>", ops, ops[0])
+		}
+		if err != nil {
+			return usageError(err, renameHelp, stdout, stderr)
+		}
+		call.File = qs[0].Path
+		return navigate(stdout, stderr, func(n *nav.Navigator) int { return n.Rename(qs[0], ops[2], *showFixDiff, stdout, stderr) })
 	}
-	if err == nil {
-		qs, err = nav.Parse("rename", ops[:2])
-	}
-	if err == nil && qs[0].Path == "" {
-		err = fmt.Errorf("rename %q: %s is not a position <path>:<line>", ops, ops[0])
-	}
-	if err != nil {
-		return usageError(err, renameHelp, stdout, stderr)
-	}
-	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
-	call.File = qs[0].Path
-	return navigate(stdout, stderr, func(n *nav.Navigator) int { return n.Rename(qs[0], ops[2], *showFixDiff, stdout, stderr) })
 }
 
-// operands parses the flags in args, which may also follow the operands, and returns the operands.
-func operands(fl *flag.FlagSet, args []string) ([]string, error) {
-	var ops []string
-	err := fl.Parse(args)
-	for err == nil && fl.NArg() > 0 {
-		ops = append(ops, fl.Arg(0))
-		err = fl.Parse(fl.Args()[1:])
-	}
-	return ops, err
-}
-
-// questions parses the flags and questions of a navigation command and adds the flags and the first path to call.
-func questions(fl *flag.FlagSet, args []string, call *stats.Call) ([]nav.Question, error) {
-	questions, err := operands(fl, args)
+// questions parses the questions of a navigation command and adds the first path to call.
+func questions(name string, args []string, call *stats.Call) ([]nav.Question, error) {
+	qs, err := nav.Parse(name, args)
 	if err != nil {
 		return nil, err
 	}
-	qs, err := nav.Parse(fl.Name(), questions)
-	if err != nil {
-		return nil, err
-	}
-	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
 	for _, q := range qs {
 		if q.Path != "" {
 			call.File = q.Path
@@ -647,33 +636,30 @@ func answered(all bool) int {
 	return notApplied
 }
 
-func statsCmd(args []string, stdout, stderr io.Writer) int {
-	fl := newFlags("stats")
-	err := fl.Parse(args)
-	if err == nil && fl.NArg() > 0 {
-		err = errors.New("stats takes no arguments")
-	}
-	if err != nil {
-		return usageError(err, statsHelp, stdout, stderr)
-	}
-	db, err := stats.Path()
-	if err == nil {
-		_, err = os.Stat(db)
-	}
-	if err != nil {
-		fmt.Fprintln(stderr, err)
+func statsCmd(_ *pflag.FlagSet, _ io.Reader, stdout, stderr io.Writer, _ *stats.Call) func([]string) int {
+	return func(args []string) int {
+		if len(args) > 0 {
+			return usageError(errors.New("stats takes no arguments"), statsHelp, stdout, stderr)
+		}
+		db, err := stats.Path()
+		if err == nil {
+			_, err = os.Stat(db)
+		}
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return notApplied
+		}
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return notApplied
+		}
+		url := "http://" + ln.Addr().String() + "/"
+		fmt.Fprintln(stdout, url)
+		browse(url)
+		fmt.Fprintln(stderr, http.Serve(ln, stats.Handler(db)))
 		return notApplied
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return notApplied
-	}
-	url := "http://" + ln.Addr().String() + "/"
-	fmt.Fprintln(stdout, url)
-	browse(url)
-	fmt.Fprintln(stderr, http.Serve(ln, stats.Handler(db)))
-	return notApplied
 }
 
 // browse opens url in the browser when the system has a way to; the url is printed either way.
