@@ -52,18 +52,18 @@ const editOps = `  --replace OLD NEW [--count N]    replace the text OLD found e
 
 const usage = `catnip shows and edits files from the shell; commands chain with && by their exit codes.
 
-catnip show [--rev <rev>] <path>[:<from>-<to> | :<line>[:<column> | #<hash>] | ::<symbol>]... [--outline]
+catnip show [--rev <rev>] [--outline] <path>[:<from>-<to> | :<line>[:<column> | #<hash>] | ::<symbol>]...
   print the file, its lines <from> to <to>, line <line> with 5 lines on each side, or the
   Go declaration <symbol> (Func, Type, Type.Method) from its doc comment to its end;
   --outline prints the line of each declaration of a Go file; --rev prints the file as it
   was in a git revision; several targets print one block each; by default each line comes
   after its address <line>#<hash>, which catnip edit takes
 
-catnip edit <path> <edit>...
+catnip edit [--skip-checks] <path> <edit>...
   apply the edits to the file: all of them, or none if any does not match; every edit
   addresses the file as it was before the command; OLD and NEW may span several lines
 ` + editOps + `
-catnip write <path> < content
+catnip write [--skip-checks] <path> < content
   replace the file with stdin, creating it if missing
 
 catnip def [--body] <path>:<line>[:<column> | #<hash>] <expression>... | <name>...
@@ -87,7 +87,7 @@ catnip stats
 
 After edit, write and rename catnip prints what changed and runs the fixers and checks
 configured for the file; --skip-checks of edit and write skips them.
-A command takes its flags anywhere after its name.
+Flags go right after the command name, as above; anywhere after it is accepted too.
 catnip <command> --help prints all flags of the command.
 ` + exitCodes
 
@@ -129,7 +129,7 @@ usage: catnip edit [flags] <path> <edit>...
 
 edits:
 ` + editOps + `
-flags, before or after the path and between the edits:
+flags, right after edit; also accepted after the path and between the edits:
   --show-fix-diff  also print what each fixer changed
   --skip-checks    run no fixers and checks: for a file not meant to pass them yet
 ` + exitCodes

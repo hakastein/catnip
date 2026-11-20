@@ -27,7 +27,7 @@ catnip show --blame src/a.php:57          # commit, author and date of every lin
 catnip show src/a.php:40-80 src/b.php     # several targets, a block each after its target line
 catnip show --rev main src/a.php:40-80    # the file as it was in a git revision
 catnip show cart/cart.go::Cart.Add        # a Go declaration by name, from its doc comment to its end
-catnip show cart/cart.go --outline        # the line of each declaration of a Go file
+catnip show --outline cart/cart.go        # the line of each declaration of a Go file
 ```
 
 A line address `57#a3f0` is the line number and a hash of its content; edits address lines by it. Lines and columns
@@ -90,8 +90,8 @@ catnip edit src/a.php \
 
 After writing, catnip prints the changed lines (`path:line`, `-`/`+`) and runs the fixers and checks from the
 config, each under its name: `<name>: passed`; `<name>: fixed` if a fixer changed the file (`--show-fix-diff`
-shows what it changed); `<name>: failed` and the command's output. A change of BOM or line endings
-is reported on a line of its own. `--skip-checks` runs no fixers and checks: use it for an
+right after `edit` shows what it changed); `<name>: failed` and the command's output. A change of BOM or line endings
+is reported on a line of its own. `--skip-checks` right after `edit` runs no fixers and checks: use it for an
 intermediate state that cannot pass them yet (a refactoring in several steps, an import before its use), not to get
 past a failure. Complete the related edits, then run the project's checks on the complete state.
 
