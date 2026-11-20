@@ -77,21 +77,21 @@ Windows — из Git for Windows в `PATH`.
 типам библиотекой [agent-lsp](https://github.com/hakastein/agent-lsp), без сервера и демона.
 
 ```bash
-catnip def main.go:312 view.ParseTarget    # позиция и выражение со строки
-catnip def main.go:312#f032 ParseTarget    # адрес строки из show; строка не должна была измениться
-catnip def main.go:311:52 call.Flags       # колонка (в байтах с 1) выбирает одно из одинаковых выражений
+catnip def main.go:329 view.ParseTarget    # позиция и выражение со строки
+catnip def main.go:329#e427 ParseTarget    # адрес строки из show; строка не должна была измениться
+catnip def main.go:324:32 call.Flags       # колонка (в байтах с 1) выбирает одно из одинаковых выражений
 catnip def view.Target Navigator.Close     # имена: Func, Type.Method, pkg.Func, pkg.Type.Method
 catnip def --body Navigator.Def            # объявление целиком
 ```
 
 ```
-main.go:312 view.ParseTarget
-internal/view/view.go:31#3f2c: // ParseTarget reads path, path:from-to, path:line, path:line:column (1-based, as positions in LSP tools print them)
-internal/view/view.go:32#0f38: // path:line#hash, the address catnip prints, or path::symbol. A position shows context lines on each side. The symbol
-internal/view/view.go:33#d814: // is Name or Type.Name of Go identifiers after the last ::; otherwise :: is part of the path.
-internal/view/view.go:34#874a: func ParseTarget(s string, context int) (Target, error) {
+main.go:329 view.ParseTarget
+internal/view/view.go:32#3f2c: // ParseTarget reads path, path:from-to, path:line, path:line:column (1-based, as positions in LSP tools print them)
+internal/view/view.go:33#0f38: // path:line#hash, the address catnip prints, or path::symbol. A position shows context lines on each side. The symbol
+internal/view/view.go:34#d814: // is Name or Type.Name of Go identifiers after the last ::; otherwise :: is part of the path.
+internal/view/view.go:35#874a: func ParseTarget(s string, context int) (Target, error) {
 
-main.go:323 fmt.Fprintln
+main.go:354 fmt.Fprintln
 /usr/local/go/src/fmt/print.go:300#2e33: // Fprintln formats using the default formats for its operands and writes to w.
 /usr/local/go/src/fmt/print.go:301#d404: // Spaces are always added between operands and a newline is appended.
 /usr/local/go/src/fmt/print.go:302#a23d: // It returns the number of bytes written and any write error encountered.
@@ -121,9 +121,9 @@ main.go:323 fmt.Fprintln
 задаётся одним из них.
 
 ```bash
-catnip ref main.go:312 view.ParseTarget          # использования
+catnip ref main.go:329 view.ParseTarget          # использования
 catnip ref internal/nav/nav.go:33 Definition     # метод интерфейса: использования и реализации
-catnip ref internal/view/view.go:34#874a ParseTarget  # адрес из ответа def
+catnip ref internal/view/view.go:35#874a ParseTarget  # адрес из ответа def
 catnip ref --limit 3 edit.Hash                   # не больше 3 строк
 ```
 
@@ -135,9 +135,9 @@ implementations:
 
 edit.Hash
 internal/edit/apply_test.go:12#4d83: 	return &edit.LineRange{From: from, To: to, FromHash: edit.Hash(fromLine), ToHash: edit.Hash(toLine)}
-internal/nav/nav_test.go:129#ae97: 	return fmt.Sprintf("%s:%d#%s: %s\n", filepath.FromSlash(path), n, edit.Hash(text), text)
-internal/view/view_test.go:62#76bf: 		{name: "line addresses", target: view.Target{Path: "f", From: 1, To: 2}, gutter: "hash", want: "1#" + edit.Hash("a") + "\ta\n2#" + edit.Hash("b") + "\tb\n"},
-21 more lines in 7 files
+main_test.go:51#a695: 		{name: "show -C0 glued", project: `{}`, before: "a\nb\nc\n", args: []string{"show", "-C0", "p/a.txt:2"}, code: ok, after: "a\nb\nc\n", tail: "2#" + edit.Hash("b") + "\tb\n"},
+internal/nav/nav_test.go:144#ae97: 	return fmt.Sprintf("%s:%d#%s: %s\n", filepath.FromSlash(path), n, edit.Hash(text), text)
+23 more lines in 7 files
 ```
 
 - Ответ — блок на вопрос: строка вопроса, использования, затем после строки `implementations:` реализации. Каждая

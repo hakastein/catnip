@@ -12,7 +12,8 @@ import (
 )
 
 // Op is one edit. The target is text (Old), whole lines (Lines) or a place between lines (Insert). An empty New
-// deletes the text or lines; with Insert it is one empty line.
+// deletes the text or lines; with Insert it is one empty line. New of Lines and Insert is lines joined by line breaks:
+// a line break at its end starts an empty last line.
 type Op struct {
 	// Old is the exact text to find.
 	Old string
@@ -227,12 +228,12 @@ func resolveLines(text string, op Op) ([]change, string) {
 	}
 	start := offset(lines, r.From)
 	end := offset(lines, r.To+1)
-	// New text is whole lines: it ends with a terminator unless it replaces an unterminated last line, and deleting
-	// that line also drops the terminator before it, so the file still ends without one. An empty last new line exists
-	// only with a terminator after it.
-	newText := strings.TrimSuffix(op.New, "\n")
+	// New text ends with a terminator unless it replaces an unterminated last line, and deleting that line also drops
+	// the terminator before it, so the file still ends without one. An empty last new line exists only with a
+	// terminator after it.
+	newText := op.New
 	if end > len(text) {
-		if op.New != "" && (newText == "" || strings.HasSuffix(newText, "\n")) {
+		if strings.HasSuffix(newText, "\n") {
 			newText += "\n"
 		}
 		return []change{{start: start, end: len(text), text: newText, chop: op.New == ""}}, ""
@@ -252,7 +253,7 @@ func resolveInsert(text string, op Op) ([]change, string) {
 	if reason := CheckLine(lines, a.Line, a.Hash); reason != "" {
 		return nil, reason
 	}
-	newText := strings.TrimSuffix(op.New, "\n")
+	newText := op.New
 	if !a.After {
 		at := offset(lines, a.Line)
 		return []change{{start: at, end: at, text: newText + "\n"}}, ""

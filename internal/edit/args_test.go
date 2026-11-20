@@ -24,6 +24,7 @@ func TestParseArgs(t *testing.T) {
 				"--lines", "7#1234", "",
 				"--after", "2#00aa", "a\nb",
 				"--before", "1#00bb", "--c",
+				"--after", "3#00cc", "",
 			},
 			want: []edit.Op{
 				{Old: "--old \"$x\" \\", New: "new\nline", Count: 2},
@@ -32,6 +33,7 @@ func TestParseArgs(t *testing.T) {
 				{Lines: &edit.LineRange{From: 7, To: 7, FromHash: "1234", ToHash: "1234"}},
 				{Insert: &edit.Anchor{Line: 2, Hash: "00aa", After: true}, New: "a\nb"},
 				{Insert: &edit.Anchor{Line: 1, Hash: "00bb"}, New: "--c"},
+				{Insert: &edit.Anchor{Line: 3, Hash: "00cc", After: true}},
 			},
 		},
 		{name: "no edits", args: nil, err: "no edits: want --replace OLD NEW, --lines FROM#HASH[-TO#HASH] NEW, --after LINE#HASH NEW or --before LINE#HASH NEW"},
@@ -54,7 +56,6 @@ func TestParseArgs(t *testing.T) {
 		{name: "insert at a bad address", args: []string{"--after", "1", "x"}, err: `--after: "1" is not LINE#HASH as catnip show prints it`},
 		{name: "insert at a negative line", args: []string{"--after", "-1#0000", "x"}, err: `--after: "-1#0000" is not LINE#HASH as catnip show prints it`},
 		{name: "insert at line zero", args: []string{"--after", "0#0000", "x"}, err: `--after: "0#0000": lines start at 1`},
-		{name: "empty insert", args: []string{"--before", "1#0000", ""}, err: `--before "1#0000" "": empty NEW inserts nothing`},
 		{name: "unknown argument", args: []string{"--middle", "a", "b"}, err: `unexpected "--middle": want --replace, --lines, --after or --before`},
 		{name: "help in place of an edit", args: []string{"--replace", "--help", "b", "--help"}, err: "flag: help requested"},
 	}
