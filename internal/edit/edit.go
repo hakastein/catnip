@@ -174,7 +174,8 @@ func Apply(raw []byte, ops []Op) ([]byte, []Failure) {
 	}
 	b.WriteString(text[pos:])
 	out := b.String()
-	if chop {
+	// the deleted unterminated last line takes the terminator before it, unless that ends an empty last line
+	if chop && out != "\n" && !strings.HasSuffix(out, "\n\n") {
 		out = strings.TrimSuffix(out, "\n")
 	}
 	return enc.Encode(out), nil

@@ -45,6 +45,7 @@ const editOps = `  --replace OLD NEW [--count N]    replace the text OLD found e
   --after LINE#HASH NEW            insert lines after the line
   --before LINE#HASH NEW           insert lines before the line
   an empty NEW deletes OLD or the lines; --after and --before need a non-empty NEW
+  a line break ending NEW of --lines, --after or --before ends its last line: one empty line is $'\n'
 `
 
 const usage = `catnip shows and edits files from the shell; commands chain with && by their exit codes.
