@@ -3,7 +3,6 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -12,11 +11,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
-	"slices"
 	"strings"
 	"time"
 
+	"github.com/alecthomas/kong"
 	"github.com/hakastein/catnip/internal/check"
 	"github.com/hakastein/catnip/internal/config"
 	"github.com/hakastein/catnip/internal/edit"
@@ -50,18 +50,18 @@ const editOps = `  --replace OLD NEW [--count N]    replace the text OLD found e
 
 const usage = `catnip shows and edits files from the shell; commands chain with && by their exit codes.
 
-catnip show [--rev <rev>] <path>[:<from>-<to> | :<line>[:<column> | #<hash>] | ::<symbol>]... [--outline]
+catnip show [--rev <rev>] [--outline] <path>[:<from>-<to> | :<line>[:<column> | #<hash>] | ::<symbol>]...
   print the file, its lines <from> to <to>, line <line> with 5 lines on each side, or the
   Go declaration <symbol> (Func, Type, Type.Method) from its doc comment to its end;
   --outline prints the line of each declaration of a Go file; --rev prints the file as it
   was in a git revision; several targets print one block each; by default each line comes
   after its address <line>#<hash>, which catnip edit takes
 
-catnip edit <path> <edit>...
+catnip edit [--skip-checks] <path> <edit>...
   apply the edits to the file: all of them, or none if any does not match; every edit
   addresses the file as it was before the command; OLD and NEW may span several lines
 ` + editOps + `
-catnip write <path> < content
+catnip write [--skip-checks] <path> < content
   replace the file with stdin, creating it if missing
 
 catnip def [--body] <path>:<line>[:<column> | #<hash>] <expression>... | <name>...
@@ -84,7 +84,8 @@ catnip stats
   open a report on recorded catnip calls in the browser
 
 After edit, write and rename catnip prints what changed and runs the fixers and checks
-configured for the file; --skip-checks before the path of edit and write skips them.
+configured for the file; --skip-checks of edit and write skips them.
+Flags go right after the command name, as above; after all its arguments is accepted too.
 catnip <command> --help prints all flags of the command.
 ` + exitCodes
 
@@ -126,7 +127,7 @@ usage: catnip edit [flags] <path> <edit>...
 
 edits:
 ` + editOps + `
-flags:
+flags, right after edit; also accepted after the path and between the edits:
   --show-fix-diff  also print what each fixer changed
   --skip-checks    run no fixers and checks: for a file not meant to pass them yet
 ` + exitCodes
@@ -237,134 +238,165 @@ func main() {
 	os.Exit(code)
 }
 
-// run runs the command in args and fills in the file and flags of call.
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.Call) int {
-	if len(args) == 0 {
-		fmt.Fprint(stderr, usage)
-		return badUsage
-	}
-	switch args[0] {
-	case "show":
-		return show(args[1:], stdout, stderr, call)
-	case "edit":
-		return editCmd(args[1:], stdout, stderr, call)
-	case "write":
-		return write(args[1:], stdin, stdout, stderr, call)
-	case "def":
-		return def(args[1:], stdout, stderr, call)
-	case "ref":
-		return ref(args[1:], stdout, stderr, call)
-	case "rename":
-		return rename(args[1:], stdout, stderr, call)
-	case "stats":
-		return statsCmd(args[1:], stdout, stderr)
-	case "help", "-h", "--help":
-		if len(args) == 1 {
-			fmt.Fprint(stdout, usage)
-			return ok
-		}
-		if h, found := helps[args[1]]; found {
-			fmt.Fprint(stdout, h)
-			return ok
-		}
-		args = args[1:]
-	}
-	fmt.Fprintf(stderr, "unknown command %q\n%s", args[0], usage)
-	return badUsage
+// env is what a command runs with.
+type env struct {
+	stdin          io.Reader
+	stdout, stderr io.Writer
+	call           *stats.Call
 }
 
-// usageError prints the help of a command: to stdout when err asks for it (ok), otherwise after err to stderr (badUsage).
-func usageError(err error, help string, stdout, stderr io.Writer) int {
-	if errors.Is(err, flag.ErrHelp) {
-		fmt.Fprint(stdout, help)
+// command is a command of catnip: its fields are its flags and arguments, run gives its exit code.
+type command interface {
+	run(e env) int
+}
+
+// cli is the grammar of catnip.
+type cli struct {
+	Help    helpFlag  `short:"h"`
+	Show    showCmd   `cmd:""`
+	Edit    editCmd   `cmd:""`
+	Write   writeCmd  `cmd:""`
+	Def     defCmd    `cmd:""`
+	Ref     refCmd    `cmd:""`
+	Rename  renameCmd `cmd:""`
+	Stats   statsCmd  `cmd:""`
+	HelpCmd helpCmd   `cmd:"" name:"help"`
+}
+
+// run runs the command in args and fills in the file and flags of call.
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.Call) int {
+	var c cli
+	parser, err := kong.New(&c, kong.Name("catnip"), kong.NoDefaultHelp(), kong.Writers(stdout, stderr),
+		kong.Vars{"gutters": strings.Join(view.Gutters, ",")},
+		kong.TypeMapper(reflect.TypeFor[editFlag](), editFlags{&c.Edit.ops}))
+	if err != nil {
+		panic(err) // the grammar is fixed in the code
+	}
+	ctx, err := parser.Parse(args)
+	if errors.Is(err, errHelp) {
 		return ok
 	}
+	if err != nil {
+		help := usage
+		if perr := (*kong.ParseError)(nil); errors.As(err, &perr) {
+			help = helpOf(perr.Context)
+		}
+		fmt.Fprintf(stderr, "%v\n%s", err, help)
+		return badUsage
+	}
+	for _, p := range ctx.Path {
+		if p.Flag != nil {
+			call.Flags = append(call.Flags, dashed(p.Flag.Name))
+		}
+	}
+	return ctx.Selected().Target.Addr().Interface().(command).run(env{stdin, stdout, stderr, call})
+}
+
+// errHelp is the outcome of a call that asked for help.
+var errHelp = errors.New("help requested")
+
+// helpFlag prints the help of the command it is given with, or of catnip, instead of running it.
+type helpFlag bool
+
+func (helpFlag) BeforeReset(ctx *kong.Context) error {
+	fmt.Fprint(ctx.Stdout, helpOf(ctx))
+	return errHelp
+}
+
+// helpOf is the help of the command in ctx, or of catnip without one.
+func helpOf(ctx *kong.Context) string {
+	if ctx != nil && ctx.Selected() != nil {
+		if h, found := helps[ctx.Selected().Name]; found {
+			return h
+		}
+	}
+	return usage
+}
+
+// helpCmd prints the help of catnip or of a command.
+type helpCmd struct {
+	Command string `arg:"" optional:""`
+}
+
+func (c *helpCmd) run(e env) int {
+	help, found := helps[c.Command]
+	switch {
+	case c.Command == "":
+		fmt.Fprint(e.stdout, usage)
+	case found:
+		fmt.Fprint(e.stdout, help)
+	default:
+		fmt.Fprintf(e.stderr, "unknown command %q\n%s", c.Command, usage)
+		return badUsage
+	}
+	return ok
+}
+
+// usageError prints err and the help of a command to stderr.
+func usageError(err error, help string, stderr io.Writer) int {
 	fmt.Fprintf(stderr, "%v\n%s", err, help)
 	return badUsage
 }
 
-// newFlags is a flag set that leaves printing its errors and help to usageError.
-func newFlags(name string) *flag.FlagSet {
-	fl := flag.NewFlagSet(name, flag.ContinueOnError)
-	fl.SetOutput(io.Discard)
-	return fl
+type showCmd struct {
+	Gutter  string `default:"hash" enum:"${gutters}"`
+	Blame   bool
+	C       int `name:"C" short:"C" default:"5"`
+	Outline bool
+	Rev     *string
+	Targets []string `arg:"" name:"path"`
 }
 
-func show(args []string, stdout, stderr io.Writer, call *stats.Call) int {
-	fl := newFlags("show")
-	gutter := fl.String("gutter", "hash", "before each line: hash (<n>#<hash>), line (<n>) or none")
-	blame := fl.Bool("blame", false, "add git blame of each line")
-	context := fl.Int("C", 5, "lines of context around a position")
-	outline := fl.Bool("outline", false, "the line of each declaration of a Go file")
-	rev := fl.String("rev", "", "show the file as it was in this git revision")
-	args = slices.Clone(args) // args shares its array with the recorded argv
-	for i, a := range args {
-		if a == "--" {
-			break
-		}
-		if len(a) > 2 && strings.HasPrefix(a, "-C") && a[2] != '=' {
-			args[i] = "-C=" + a[2:] // -C0 as grep takes it; flag reads it as a flag named C0
+func (s *showCmd) run(e env) int {
+	if s.C < 0 {
+		return usageError(fmt.Errorf("-C %d: want 0 or more", s.C), showHelp, e.stderr)
+	}
+	rev := ""
+	if s.Rev != nil {
+		if rev = *s.Rev; rev == "" || strings.HasPrefix(rev, "-") {
+			return usageError(fmt.Errorf("--rev %q: want a git revision", rev), showHelp, e.stderr)
 		}
 	}
-	ops, err := operands(fl, args)
-	switch {
-	case err != nil:
-	case !slices.Contains(view.Gutters, *gutter):
-		err = fmt.Errorf("--gutter %q: want one of %s", *gutter, strings.Join(view.Gutters, ", "))
-	case *context < 0:
-		err = fmt.Errorf("-C %d: want 0 or more", *context)
-	case len(ops) == 0:
-		err = errors.New("show takes a path, got none")
-	}
-	if err != nil {
-		return usageError(err, showHelp, stdout, stderr)
-	}
-	revSet := false
-	fl.Visit(func(f *flag.Flag) {
-		call.Flags = append(call.Flags, dashed(f.Name))
-		revSet = revSet || f.Name == "rev"
-	})
-	ts := make([]view.Target, len(ops))
-	for i, op := range ops {
-		ts[i], err = view.ParseTarget(op, *context)
+	ts := make([]view.Target, len(s.Targets))
+	for i, op := range s.Targets {
+		var err error
+		ts[i], err = view.ParseTarget(op, s.C)
 		switch {
 		case err != nil:
-		case *outline && (ts[i].From != 0 || ts[i].Symbol != ""):
+		case s.Outline && (ts[i].From != 0 || ts[i].Symbol != ""):
 			err = fmt.Errorf("--outline %s: want a path without lines or a symbol", op)
-		case revSet && (*rev == "" || strings.HasPrefix(*rev, "-")):
-			err = fmt.Errorf("--rev %q: want a git revision", *rev)
-		case *rev != "" && (*outline || ts[i].Symbol != ""):
-			err = fmt.Errorf("--rev %s %s: ::<symbol> and --outline read the working tree", *rev, op)
+		case rev != "" && (s.Outline || ts[i].Symbol != ""):
+			err = fmt.Errorf("--rev %s %s: ::<symbol> and --outline read the working tree", rev, op)
 		}
 		if err != nil {
-			return usageError(err, showHelp, stdout, stderr)
+			return usageError(err, showHelp, e.stderr)
 		}
 	}
-	call.File = ts[0].Path
+	e.call.File = ts[0].Path
 	code := ok
 	prefix := func(i int) string { // with several targets, what a target says on stderr starts with the target
 		if len(ts) > 1 {
-			return ops[i] + ": "
+			return s.Targets[i] + ": "
 		}
 		return ""
 	}
 	for i, t := range ts {
 		if len(ts) > 1 {
 			if i > 0 {
-				fmt.Fprintln(stdout)
+				fmt.Fprintln(e.stdout)
 			}
-			fmt.Fprintln(stdout, ops[i])
+			fmt.Fprintln(e.stdout, s.Targets[i])
 		}
-		out, warning, err := showTarget(t, *rev, *outline, *gutter, *blame)
+		out, warning, err := showTarget(t, rev, s.Outline, s.Gutter, s.Blame)
 		if err != nil {
-			fmt.Fprintln(stderr, prefix(i)+err.Error())
+			fmt.Fprintln(e.stderr, prefix(i)+err.Error())
 			code = notApplied
 			continue
 		}
 		if warning != "" {
-			fmt.Fprintln(stderr, prefix(i)+warning)
+			fmt.Fprintln(e.stderr, prefix(i)+warning)
 		}
-		fmt.Fprint(stdout, out)
+		fmt.Fprint(e.stdout, out)
 	}
 	return code
 }
@@ -423,67 +455,70 @@ func declarations(t view.Target, outline bool) ([]view.Target, error) {
 	return ts, err
 }
 
-func editCmd(args []string, stdout, stderr io.Writer, call *stats.Call) int {
-	showFixDiff, skipChecks, args, err := fixFlags("edit", args, call)
-	if err == nil && (len(args) == 0 || strings.HasPrefix(args[0], "--")) {
-		err = errors.New("edit needs the file path first")
+// editFlag is an edit of catnip edit, read by editFlags.
+type editFlag struct{}
+
+// editFlags reads the edits of catnip edit into ops in the order given: two values each, one for --count.
+type editFlags struct{ ops *[]edit.Op }
+
+func (f editFlags) Decode(ctx *kong.DecodeContext, _ reflect.Value) error {
+	n := 2
+	if ctx.Value.Name == "count" {
+		n = 1
 	}
+	var values []string
+	for t := ctx.Scan.Peek(); len(values) < n && !t.IsEOL(); t = ctx.Scan.Peek() {
+		values = append(values, ctx.Scan.Pop().String())
+	}
+	ops, err := edit.Add(*f.ops, ctx.Value.Name, values)
 	if err != nil {
-		return usageError(err, editHelp, stdout, stderr)
+		return err
 	}
-	path := args[0]
-	call.File = path
-	ops, err := edit.ParseArgs(args[1:])
-	if err != nil {
-		return usageError(err, editHelp, stdout, stderr)
+	*f.ops = ops
+	return nil
+}
+
+type editCmd struct {
+	Path        string `arg:""`
+	Replace     editFlag
+	Count       editFlag
+	Lines       editFlag
+	After       editFlag
+	Before      editFlag
+	ShowFixDiff bool
+	SkipChecks  bool
+	ops         []edit.Op
+}
+
+func (c *editCmd) run(e env) int {
+	if len(c.ops) == 0 {
+		return usageError(errors.New("no edits: want --replace OLD NEW, --lines FROM#HASH[-TO#HASH] NEW, --after LINE#HASH NEW or --before LINE#HASH NEW"), editHelp, e.stderr)
 	}
-	for _, op := range ops {
-		switch {
-		case op.Lines != nil:
-			call.Flags = append(call.Flags, "--lines")
-		case op.Insert != nil && op.Insert.After:
-			call.Flags = append(call.Flags, "--after")
-		case op.Insert != nil:
-			call.Flags = append(call.Flags, "--before")
-		case op.Count != 1:
-			call.Flags = append(call.Flags, "--replace", "--count")
-		default:
-			call.Flags = append(call.Flags, "--replace")
-		}
-	}
+	path := c.Path
+	e.call.File = path
 	cfg, err := config.Load(filepath.Dir(path))
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		fmt.Fprintln(e.stderr, err)
 		return badUsage
 	}
 	before, err := os.ReadFile(path)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		fmt.Fprintln(e.stderr, err)
 		return notApplied
 	}
-	after, fails := edit.Apply(before, ops)
+	after, fails := edit.Apply(before, c.ops)
 	if fails != nil {
 		for _, f := range fails {
-			fmt.Fprintf(stderr, "%s: %s\n", path, f)
+			fmt.Fprintf(e.stderr, "%s: %s\n", path, f)
 		}
-		fmt.Fprintln(stderr, "nothing written")
+		fmt.Fprintln(e.stderr, "nothing written")
 		return notApplied
 	}
 	if string(after) == string(before) {
-		fmt.Fprintln(stdout, "no changes")
+		fmt.Fprintln(e.stdout, "no changes")
 		return ok
 	}
-	return commit(cfg, path, before, after, showFixDiff, skipChecks, stdout, stderr)
-}
-
-// fixFlags parses the flags of edit and write, which come before the path, and adds them to call.
-func fixFlags(name string, args []string, call *stats.Call) (showFixDiff, skipChecks bool, rest []string, err error) {
-	fl := newFlags(name)
-	fl.BoolVar(&showFixDiff, "show-fix-diff", false, "also print what each fixer changed")
-	fl.BoolVar(&skipChecks, "skip-checks", false, "run no fixers and checks")
-	err = fl.Parse(args)
-	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
-	return showFixDiff, skipChecks, fl.Args(), err
+	return commit(cfg, path, before, after, c.ShowFixDiff, c.SkipChecks, e.stdout, e.stderr)
 }
 
 // dashed is a flag name as usage spells it.
@@ -494,35 +529,34 @@ func dashed(name string) string {
 	return "--" + name
 }
 
-func write(args []string, stdin io.Reader, stdout, stderr io.Writer, call *stats.Call) int {
-	showFixDiff, skipChecks, args, err := fixFlags("write", args, call)
-	if err == nil && len(args) != 1 {
-		err = fmt.Errorf("write takes one path, got %d", len(args))
-	}
-	if err != nil {
-		return usageError(err, writeHelp, stdout, stderr)
-	}
-	path := args[0]
-	call.File = path
+type writeCmd struct {
+	Path        string `arg:""`
+	ShowFixDiff bool
+	SkipChecks  bool
+}
+
+func (c *writeCmd) run(e env) int {
+	path := c.Path
+	e.call.File = path
 	cfg, err := config.Load(filepath.Dir(path))
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		fmt.Fprintln(e.stderr, err)
 		return badUsage
 	}
-	data, err := io.ReadAll(stdin)
+	data, err := io.ReadAll(e.stdin)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		fmt.Fprintln(e.stderr, err)
 		return notApplied
 	}
 	old, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		fmt.Fprintln(stderr, err)
+		fmt.Fprintln(e.stderr, err)
 		return notApplied
 	}
 	if old != nil {
 		data = edit.Keep(old, data)
 	}
-	return commit(cfg, path, old, data, showFixDiff, skipChecks, stdout, stderr)
+	return commit(cfg, path, old, data, c.ShowFixDiff, c.SkipChecks, e.stdout, e.stderr)
 }
 
 // commit writes the file, prints its diff and, unless skipChecks, runs its fixers and checks; a fixer's own diff only
@@ -547,73 +581,60 @@ func commit(cfg *config.Config, path string, before, after []byte, showFixDiff, 
 	return ok
 }
 
-func def(args []string, stdout, stderr io.Writer, call *stats.Call) int {
-	fl := newFlags("def")
-	body := fl.Bool("body", false, "print the whole declaration")
-	qs, err := questions(fl, args, call)
-	if err != nil {
-		return usageError(err, defHelp, stdout, stderr)
-	}
-	return navigate(stdout, stderr, func(n *nav.Navigator) int { return answered(n.Def(qs, *body, stdout, stderr)) })
+type defCmd struct {
+	Body      bool
+	Questions []string `arg:"" name:"question"`
 }
 
-func ref(args []string, stdout, stderr io.Writer, call *stats.Call) int {
-	fl := newFlags("ref")
-	limit := fl.Int("limit", 60, "lines of an answer")
-	qs, err := questions(fl, args, call)
-	if err == nil && *limit < 1 {
-		err = fmt.Errorf("--limit %d: want 1 or more", *limit)
-	}
+func (c *defCmd) run(e env) int {
+	qs, err := questions("def", c.Questions, e.call)
 	if err != nil {
-		return usageError(err, refHelp, stdout, stderr)
+		return usageError(err, defHelp, e.stderr)
 	}
-	return navigate(stdout, stderr, func(n *nav.Navigator) int { return answered(n.Ref(qs, *limit, stdout, stderr)) })
+	return navigate(e.stdout, e.stderr, func(n *nav.Navigator) int { return answered(n.Def(qs, c.Body, e.stdout, e.stderr)) })
 }
 
-func rename(args []string, stdout, stderr io.Writer, call *stats.Call) int {
-	fl := newFlags("rename")
-	showFixDiff := fl.Bool("show-fix-diff", false, "also print what each fixer changed")
-	ops, err := operands(fl, args)
-	var qs []nav.Question
-	if err == nil && len(ops) != 3 {
-		err = fmt.Errorf("rename %q: want <position> <expression> <new name>", ops)
+type refCmd struct {
+	Limit     int      `default:"60"`
+	Questions []string `arg:"" name:"question"`
+}
+
+func (c *refCmd) run(e env) int {
+	qs, err := questions("ref", c.Questions, e.call)
+	if err == nil && c.Limit < 1 {
+		err = fmt.Errorf("--limit %d: want 1 or more", c.Limit)
 	}
-	if err == nil {
-		qs, err = nav.Parse("rename", ops[:2])
+	if err != nil {
+		return usageError(err, refHelp, e.stderr)
 	}
+	return navigate(e.stdout, e.stderr, func(n *nav.Navigator) int { return answered(n.Ref(qs, c.Limit, e.stdout, e.stderr)) })
+}
+
+type renameCmd struct {
+	ShowFixDiff bool
+	Position    string `arg:""`
+	Expression  string `arg:""`
+	NewName     string `arg:""`
+}
+
+func (c *renameCmd) run(e env) int {
+	qs, err := nav.Parse("rename", []string{c.Position, c.Expression})
 	if err == nil && qs[0].Path == "" {
-		err = fmt.Errorf("rename %q: %s is not a position <path>:<line>", ops, ops[0])
+		err = fmt.Errorf("rename %s: want a position <path>:<line>", c.Position)
 	}
 	if err != nil {
-		return usageError(err, renameHelp, stdout, stderr)
+		return usageError(err, renameHelp, e.stderr)
 	}
-	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
-	call.File = qs[0].Path
-	return navigate(stdout, stderr, func(n *nav.Navigator) int { return n.Rename(qs[0], ops[2], *showFixDiff, stdout, stderr) })
+	e.call.File = qs[0].Path
+	return navigate(e.stdout, e.stderr, func(n *nav.Navigator) int { return n.Rename(qs[0], c.NewName, c.ShowFixDiff, e.stdout, e.stderr) })
 }
 
-// operands parses the flags in args, which may also follow the operands, and returns the operands.
-func operands(fl *flag.FlagSet, args []string) ([]string, error) {
-	var ops []string
-	err := fl.Parse(args)
-	for err == nil && fl.NArg() > 0 {
-		ops = append(ops, fl.Arg(0))
-		err = fl.Parse(fl.Args()[1:])
-	}
-	return ops, err
-}
-
-// questions parses the flags and questions of a navigation command and adds the flags and the first path to call.
-func questions(fl *flag.FlagSet, args []string, call *stats.Call) ([]nav.Question, error) {
-	questions, err := operands(fl, args)
+// questions parses the questions of a navigation command and adds the first path to call.
+func questions(name string, args []string, call *stats.Call) ([]nav.Question, error) {
+	qs, err := nav.Parse(name, args)
 	if err != nil {
 		return nil, err
 	}
-	qs, err := nav.Parse(fl.Name(), questions)
-	if err != nil {
-		return nil, err
-	}
-	fl.Visit(func(f *flag.Flag) { call.Flags = append(call.Flags, dashed(f.Name)) })
 	for _, q := range qs {
 		if q.Path != "" {
 			call.File = q.Path
@@ -647,32 +668,26 @@ func answered(all bool) int {
 	return notApplied
 }
 
-func statsCmd(args []string, stdout, stderr io.Writer) int {
-	fl := newFlags("stats")
-	err := fl.Parse(args)
-	if err == nil && fl.NArg() > 0 {
-		err = errors.New("stats takes no arguments")
-	}
-	if err != nil {
-		return usageError(err, statsHelp, stdout, stderr)
-	}
+type statsCmd struct{}
+
+func (statsCmd) run(e env) int {
 	db, err := stats.Path()
 	if err == nil {
 		_, err = os.Stat(db)
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		fmt.Fprintln(e.stderr, err)
 		return notApplied
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		fmt.Fprintln(e.stderr, err)
 		return notApplied
 	}
 	url := "http://" + ln.Addr().String() + "/"
-	fmt.Fprintln(stdout, url)
+	fmt.Fprintln(e.stdout, url)
 	browse(url)
-	fmt.Fprintln(stderr, http.Serve(ln, stats.Handler(db)))
+	fmt.Fprintln(e.stderr, http.Serve(ln, stats.Handler(db)))
 	return notApplied
 }
 
