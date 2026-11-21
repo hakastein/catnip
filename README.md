@@ -78,21 +78,21 @@ Windows — из Git for Windows в `PATH`.
 типам библиотекой [agent-lsp](https://github.com/hakastein/agent-lsp), без сервера и демона.
 
 ```bash
-catnip def main.go:335 view.ParseTarget    # позиция и выражение со строки
-catnip def main.go:335#d537 ParseTarget    # адрес строки из show; строка не должна была измениться
-catnip def main.go:443:54 call.Flags       # колонка (в байтах с 1) выбирает одно из одинаковых выражений
+catnip def main.go:363 view.ParseTarget    # позиция и выражение со строки
+catnip def main.go:363#a83e ParseTarget    # адрес строки из show; строка не должна была измениться
+catnip def main.go:289:24 call.Flags       # колонка (в байтах с 1) выбирает одно из одинаковых выражений
 catnip def view.Target Navigator.Close     # имена: Func, Type.Method, pkg.Func, pkg.Type.Method
 catnip def --body Navigator.Def            # объявление целиком
 ```
 
 ```
-main.go:335 view.ParseTarget
+main.go:363 view.ParseTarget
 internal/view/view.go:32#3f2c: // ParseTarget reads path, path:from-to, path:line, path:line:column (1-based, as positions in LSP tools print them)
 internal/view/view.go:33#0f38: // path:line#hash, the address catnip prints, or path::symbol. A position shows context lines on each side. The symbol
 internal/view/view.go:34#d814: // is Name or Type.Name of Go identifiers after the last ::; otherwise :: is part of the path.
 internal/view/view.go:35#874a: func ParseTarget(s string, context int) (Target, error) {
 
-main.go:360 fmt.Fprintln
+main.go:386 fmt.Fprintln
 /usr/local/go/src/fmt/print.go:300#2e33: // Fprintln formats using the default formats for its operands and writes to w.
 /usr/local/go/src/fmt/print.go:301#d404: // Spaces are always added between operands and a newline is appended.
 /usr/local/go/src/fmt/print.go:302#a23d: // It returns the number of bytes written and any write error encountered.
@@ -122,7 +122,7 @@ main.go:360 fmt.Fprintln
 задаётся одним из них.
 
 ```bash
-catnip ref main.go:335 view.ParseTarget          # использования
+catnip ref main.go:363 view.ParseTarget          # использования
 catnip ref internal/nav/nav.go:33 Definition     # метод интерфейса: использования и реализации
 catnip ref internal/view/view.go:35#874a ParseTarget  # адрес из ответа def
 catnip ref --limit 3 edit.Hash                   # не больше 3 строк

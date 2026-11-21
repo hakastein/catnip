@@ -8,73 +8,51 @@ import (
 	"github.com/hakastein/catnip/internal/edit"
 )
 
-func TestParseArgs(t *testing.T) {
+func TestAdd(t *testing.T) {
+	replace := edit.Op{Old: "a", New: "b", Count: 1}
+	lines := edit.Op{Lines: &edit.LineRange{From: 1, To: 1, FromHash: "0000", ToHash: "0000"}}
 	tests := []struct {
-		name string
-		args []string
-		want edit.Args
-		err  string
+		name   string
+		ops    []edit.Op
+		edit   string
+		values []string
+		want   []edit.Op
+		err    string
 	}{
-		{
-			name: "replaces with and without count, lines; values kept as they are",
-			args: []string{
-				"a.txt",
-				"--replace", "--old \"$x\" \\", "new\nline", "--count", "2",
-				"--replace", "a", "",
-				"--lines", "3#00ff-5#abcd", "x",
-				"--lines", "7#1234", "",
-				"--after", "2#00aa", "a\nb",
-				"--before", "1#00bb", "--c",
-			},
-			want: edit.Args{Path: "a.txt", Ops: []edit.Op{
-				{Old: "--old \"$x\" \\", New: "new\nline", Count: 2},
-				{Old: "a", Count: 1},
-				{Lines: &edit.LineRange{From: 3, To: 5, FromHash: "00ff", ToHash: "abcd"}, New: "x"},
-				{Lines: &edit.LineRange{From: 7, To: 7, FromHash: "1234", ToHash: "1234"}},
-				{Insert: &edit.Anchor{Line: 2, Hash: "00aa", After: true}, New: "a\nb"},
-				{Insert: &edit.Anchor{Line: 1, Hash: "00bb"}, New: "--c"},
-			}},
-		},
-		{name: "no edits", args: []string{"a.txt"}, err: "no edits: want --replace OLD NEW, --lines FROM#HASH[-TO#HASH] NEW, --after LINE#HASH NEW or --before LINE#HASH NEW"},
-		{name: "replace without new", args: []string{"a.txt", "--replace", "a"}, err: `--replace "a": want OLD and NEW`},
-		{name: "empty text to find", args: []string{"a.txt", "--replace", "", "b"}, err: `--replace "" "b": OLD, the text to find, is empty; OLD goes first, NEW second`},
-		{name: "long text cut in the error", args: []string{"a.txt", "--replace", "", "0123456789012345678901234567890123456789+"}, err: `--replace "" "0123456789012345678901234567890123456789"…: OLD, the text to find, is empty; OLD goes first, NEW second`},
-		{name: "count without number", args: []string{"a.txt", "--replace", "a", "b", "--count"}, err: "--count needs N"},
-		{name: "bad count", args: []string{"a.txt", "--replace", "a", "b", "--count", "0"}, err: `--count: bad number "0"`},
-		{name: "count not after replace", args: []string{"a.txt", "--lines", "1#0000", "x", "--count", "2"}, err: "--count goes right after a --replace"},
-		{name: "bad line range", args: []string{"a.txt", "--lines", "1-2", "x"}, err: `--lines: "1-2" is not FROM#HASH[-TO#HASH] as catnip show prints it`},
-		{name: "text before the line number", args: []string{"a.txt", "--lines", "x1#0000", "x"}, err: `--lines: "x1#0000" is not FROM#HASH[-TO#HASH] as catnip show prints it`},
-		{name: "hash too long", args: []string{"a.txt", "--lines", "1#00000", "x"}, err: `--lines: "1#00000" is not FROM#HASH[-TO#HASH] as catnip show prints it`},
-		{name: "line zero", args: []string{"a.txt", "--lines", "0#0000", "x"}, err: `--lines: "0#0000": lines start at 1`},
-		{name: "reversed range", args: []string{"a.txt", "--lines", "3#0000-1#0000", "x"}, err: `--lines: "3#0000-1#0000": the range ends before it starts`},
-		{name: "line number too big", args: []string{"a.txt", "--lines", "99999999999999999999#0000", "x"}, err: `--lines: strconv.Atoi: parsing "99999999999999999999": value out of range`},
-		{name: "lines without new", args: []string{"a.txt", "--lines", "1#0000"}, err: `--lines "1#0000": want FROM#HASH[-TO#HASH] and NEW`},
-		{name: "insert without new", args: []string{"a.txt", "--after", "1#0000"}, err: `--after "1#0000": want LINE#HASH and NEW`},
-		{name: "insert at a range", args: []string{"a.txt", "--before", "1#0000-2#0000", "x"}, err: `--before: "1#0000-2#0000" is a range, want one LINE#HASH`},
-		{name: "insert at a reversed range", args: []string{"a.txt", "--after", "2#0000-1#0000", "x"}, err: `--after: "2#0000-1#0000" is a range, want one LINE#HASH`},
-		{name: "insert at a bad address", args: []string{"a.txt", "--after", "1", "x"}, err: `--after: "1" is not LINE#HASH as catnip show prints it`},
-		{name: "insert at a negative line", args: []string{"a.txt", "--after", "-1#0000", "x"}, err: `--after: "-1#0000" is not LINE#HASH as catnip show prints it`},
-		{name: "insert at line zero", args: []string{"a.txt", "--after", "0#0000", "x"}, err: `--after: "0#0000": lines start at 1`},
-		{name: "empty insert", args: []string{"a.txt", "--before", "1#0000", ""}, err: `--before "1#0000" "": empty NEW inserts nothing`},
-		{name: "second path", args: []string{"a.txt", "--replace", "a", "b", "b.txt"}, err: `unexpected "b.txt": want --replace, --lines, --after or --before`},
-		{
-			name: "flags before the path and in place of edits, as given",
-			args: []string{"--skip-checks", "a.txt", "--replace", "a", "b", "--show-fix-diff", "--middle", "--lines", "1#0000", "--skip-checks"},
-			want: edit.Args{
-				Path:  "a.txt",
-				Ops:   []edit.Op{{Old: "a", New: "b", Count: 1}, {Lines: &edit.LineRange{From: 1, To: 1, FromHash: "0000", ToHash: "0000"}, New: "--skip-checks"}},
-				Flags: []string{"--skip-checks", "--show-fix-diff", "--middle"},
-			},
-		},
-		{name: "no path", args: []string{"--skip-checks"}, err: "edit needs the file path first"},
-		{name: "path after --", args: []string{"--", "-a.txt", "--replace", "a", "b"}, want: edit.Args{Path: "-a.txt", Ops: []edit.Op{{Old: "a", New: "b", Count: 1}}}},
-		{name: "-- after the path", args: []string{"a.txt", "--replace", "a", "b", "--", "--skip-checks"}, err: `unexpected "--": want --replace, --lines, --after or --before`},
-		{name: "edit before the path", args: []string{"--replace", "a", "b", "a.txt"}, err: "--replace before the path: edit needs the file path first"},
-		{name: "help in place of an edit", args: []string{"a.txt", "--replace", "--help", "b", "--help"}, err: "flag: help requested"},
+		{name: "replace kept as given", ops: []edit.Op{replace}, edit: "replace", values: []string{"--old \"$x\" \\", "--skip-checks"}, want: []edit.Op{replace, {Old: "--old \"$x\" \\", New: "--skip-checks", Count: 1}}},
+		{name: "replace with an empty NEW", edit: "replace", values: []string{"a", ""}, want: []edit.Op{{Old: "a", Count: 1}}},
+		{name: "replace without NEW", edit: "replace", values: []string{"a"}, err: `want OLD and NEW, got "a"`},
+		{name: "replace without values", edit: "replace", err: "want OLD and NEW, got nothing"},
+		{name: "empty text to find", edit: "replace", values: []string{"", "b"}, err: `"" "b": OLD, the text to find, is empty; OLD goes first, NEW second`},
+		{name: "long text cut in the error", edit: "replace", values: []string{"", "0123456789012345678901234567890123456789+"}, err: `"" "0123456789012345678901234567890123456789"…: OLD, the text to find, is empty; OLD goes first, NEW second`},
+		{name: "count of the last replace", ops: []edit.Op{replace}, edit: "count", values: []string{"2"}, want: []edit.Op{{Old: "a", New: "b", Count: 2}}},
+		{name: "count without number", ops: []edit.Op{replace}, edit: "count", err: "want N"},
+		{name: "bad count", ops: []edit.Op{replace}, edit: "count", values: []string{"0"}, err: `bad number "0"`},
+		{name: "count after lines", ops: []edit.Op{lines}, edit: "count", values: []string{"2"}, err: "goes after a --replace"},
+		{name: "count first", edit: "count", values: []string{"2"}, err: "goes after a --replace"},
+		{name: "lines range", edit: "lines", values: []string{"3#00ff-5#abcd", "x"}, want: []edit.Op{{Lines: &edit.LineRange{From: 3, To: 5, FromHash: "00ff", ToHash: "abcd"}, New: "x"}}},
+		{name: "lines deleted", edit: "lines", values: []string{"1#0000", ""}, want: []edit.Op{lines}},
+		{name: "bad line range", edit: "lines", values: []string{"1-2", "x"}, err: `"1-2" is not FROM#HASH[-TO#HASH] as catnip show prints it`},
+		{name: "text before the line number", edit: "lines", values: []string{"x1#0000", "x"}, err: `"x1#0000" is not FROM#HASH[-TO#HASH] as catnip show prints it`},
+		{name: "hash too long", edit: "lines", values: []string{"1#00000", "x"}, err: `"1#00000" is not FROM#HASH[-TO#HASH] as catnip show prints it`},
+		{name: "line zero", edit: "lines", values: []string{"0#0000", "x"}, err: `"0#0000": lines start at 1`},
+		{name: "reversed range", edit: "lines", values: []string{"3#0000-1#0000", "x"}, err: `"3#0000-1#0000": the range ends before it starts`},
+		{name: "line number too big", edit: "lines", values: []string{"99999999999999999999#0000", "x"}, err: `strconv.Atoi: parsing "99999999999999999999": value out of range`},
+		{name: "lines without new", edit: "lines", values: []string{"1#0000"}, err: `want FROM#HASH[-TO#HASH] and NEW, got "1#0000"`},
+		{name: "insert after", edit: "after", values: []string{"2#00aa", "a\nb"}, want: []edit.Op{{Insert: &edit.Anchor{Line: 2, Hash: "00aa", After: true}, New: "a\nb"}}},
+		{name: "insert before", edit: "before", values: []string{"1#00bb", "--c"}, want: []edit.Op{{Insert: &edit.Anchor{Line: 1, Hash: "00bb"}, New: "--c"}}},
+		{name: "insert without new", edit: "after", values: []string{"1#0000"}, err: `want LINE#HASH and NEW, got "1#0000"`},
+		{name: "insert at a range", edit: "before", values: []string{"1#0000-2#0000", "x"}, err: `"1#0000-2#0000" is a range, want one LINE#HASH`},
+		{name: "insert at a reversed range", edit: "after", values: []string{"2#0000-1#0000", "x"}, err: `"2#0000-1#0000" is a range, want one LINE#HASH`},
+		{name: "insert at a bad address", edit: "after", values: []string{"1", "x"}, err: `"1" is not LINE#HASH as catnip show prints it`},
+		{name: "insert at a negative line", edit: "after", values: []string{"-1#0000", "x"}, err: `"-1#0000" is not LINE#HASH as catnip show prints it`},
+		{name: "insert at line zero", edit: "after", values: []string{"0#0000", "x"}, err: `"0#0000": lines start at 1`},
+		{name: "empty insert", edit: "before", values: []string{"1#0000", ""}, err: `"1#0000" "": empty NEW inserts nothing`},
+		{name: "unknown edit", edit: "middle", values: []string{"a", "b"}, err: `unknown edit "middle"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := edit.ParseArgs(tt.args)
+			got, err := edit.Add(tt.ops, tt.edit, tt.values)
 
 			assert.Equal(t, tt.err, errText(err))
 			assert.Equal(t, tt.want, got)

@@ -44,7 +44,7 @@ func TestRun(t *testing.T) {
 			after:   "a\n",
 		},
 		{name: "bad arguments", project: `{}`, before: "a\n", args: []string{"edit", "p/a.txt", "--before", "a", "b"}, code: badUsage, after: "a\n"},
-		{name: "path missing", project: `{}`, before: "a\n", args: []string{"edit", "--replace", "--replace", "a", "b"}, code: badUsage, after: "a\n"},
+		{name: "path missing", project: `{}`, before: "a\n", args: []string{"edit", "--replace", "a", "b"}, code: badUsage, after: "a\n"},
 		{name: "broken config", project: `{`, before: "a\n", args: []string{"edit", "p/a.txt", "--replace", "a", "b"}, code: badUsage, after: "a\n"},
 		{name: "written, check failed", project: `{"*.txt": {"check": {"no": "false"}}}`, before: "a\n", args: []string{"write", "p/a.txt"}, stdin: "w\n", code: checkFailed, after: "w\n"},
 		{name: "show past the end", project: `{}`, before: "a\n", args: []string{"show", "p/a.txt:5"}, code: notApplied, after: "a\n"},
