@@ -61,9 +61,9 @@ func ParseTarget(s string, context int) (Target, error) {
 		if strings.Contains(addr, "-") {
 			return Target{}, fmt.Errorf("%s: %q is a range, want one LINE#HASH", s, addr)
 		}
-		r, err := edit.ParseRange(s, "LINE#HASH", addr)
+		r, err := edit.ParseRange("LINE#HASH", addr)
 		if err != nil {
-			return Target{}, err
+			return Target{}, fmt.Errorf("%s: %w", s, err)
 		}
 		t.Hash = r.FromHash
 	}

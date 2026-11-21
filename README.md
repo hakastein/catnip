@@ -9,12 +9,13 @@ CLI для агентов: просмотр и правка файлов, сце
 что несошедшаяся правка не записывает ничего; `catnip write` создаёт файл из stdin. После записи catnip запускает
 фиксеры и проверки из конфига и сообщает результат кодом выхода. `catnip def` отвечает, где объявлен Go-символ,
 `catnip ref` — где он используется и кто его реализует, строками с теми же адресами; `catnip show <путь>::<символ>`
-печатает объявление Go-символа файла, `catnip show <путь> --outline` — строки объявлений файла; `catnip rename`
+печатает объявление Go-символа файла, `catnip show --outline <путь>` — строки объявлений файла; `catnip rename`
 переименовывает Go-символ во всех файлах проекта.
 
 Как агенту пользоваться командами — [`skills/catnip/SKILL.md`](skills/catnip/SKILL.md). `catnip help` даёт
 синтаксис каждой команды и все правки `edit`, `catnip <команда> --help` или `catnip help <команда>` — все флаги одной
-команды; ошибка аргументов печатает справку своей команды.
+команды; ошибка аргументов печатает справку своей команды. Флаги ставятся сразу после имени команды; принимаются и
+после всех её аргументов, у `edit` — и между правками.
 
 ## Установка
 
@@ -59,8 +60,8 @@ Windows — из Git for Windows в `PATH`.
 - Ключ — glob. Glob без `/` сравнивается с именем файла, с `/` — с путём от корня проекта (`*` не переходит
   через `/`).
 - `fix` и `check` — команды «имя → команда»; имя catnip печатает в выводе. Фиксер может менять файл: без изменений
-  печатает `<имя>: passed`, с изменениями — `<имя>: fixed` (сам diff фиксера — с `--show-fix-diff` перед путём у `edit`
-  и `write`; `--skip-checks` там же не запускает ни фиксеров, ни проверок — для файла, который их ещё не пройдёт).
+  печатает `<имя>: passed`, с изменениями — `<имя>: fixed` (сам diff фиксера — с `--show-fix-diff` у `edit`
+  и `write`; `--skip-checks` у них же не запускает ни фиксеров, ни проверок — для файла, который их ещё не пройдёт).
   Проверка файл не меняет: `<имя>: passed`
   или `<имя>: failed` и свой вывод; упавший фиксер — тоже `<имя>: failed`. Сначала фиксеры, потом проверки, внутри
   glob по имени; команды идут через `sh -c` в корне проекта с окружением catnip, `{file}` заменяется путём от корня
@@ -77,21 +78,21 @@ Windows — из Git for Windows в `PATH`.
 типам библиотекой [agent-lsp](https://github.com/hakastein/agent-lsp), без сервера и демона.
 
 ```bash
-catnip def main.go:329 view.ParseTarget    # позиция и выражение со строки
-catnip def main.go:329#e427 ParseTarget    # адрес строки из show; строка не должна была измениться
-catnip def main.go:324:32 call.Flags       # колонка (в байтах с 1) выбирает одно из одинаковых выражений
+catnip def main.go:363 view.ParseTarget    # позиция и выражение со строки
+catnip def main.go:363#a83e ParseTarget    # адрес строки из show; строка не должна была измениться
+catnip def main.go:289:24 call.Flags       # колонка (в байтах с 1) выбирает одно из одинаковых выражений
 catnip def view.Target Navigator.Close     # имена: Func, Type.Method, pkg.Func, pkg.Type.Method
 catnip def --body Navigator.Def            # объявление целиком
 ```
 
 ```
-main.go:329 view.ParseTarget
+main.go:363 view.ParseTarget
 internal/view/view.go:32#3f2c: // ParseTarget reads path, path:from-to, path:line, path:line:column (1-based, as positions in LSP tools print them)
 internal/view/view.go:33#0f38: // path:line#hash, the address catnip prints, or path::symbol. A position shows context lines on each side. The symbol
 internal/view/view.go:34#d814: // is Name or Type.Name of Go identifiers after the last ::; otherwise :: is part of the path.
 internal/view/view.go:35#874a: func ParseTarget(s string, context int) (Target, error) {
 
-main.go:354 fmt.Fprintln
+main.go:386 fmt.Fprintln
 /usr/local/go/src/fmt/print.go:300#2e33: // Fprintln formats using the default formats for its operands and writes to w.
 /usr/local/go/src/fmt/print.go:301#d404: // Spaces are always added between operands and a newline is appended.
 /usr/local/go/src/fmt/print.go:302#a23d: // It returns the number of bytes written and any write error encountered.
@@ -121,7 +122,7 @@ main.go:354 fmt.Fprintln
 задаётся одним из них.
 
 ```bash
-catnip ref main.go:329 view.ParseTarget          # использования
+catnip ref main.go:363 view.ParseTarget          # использования
 catnip ref internal/nav/nav.go:33 Definition     # метод интерфейса: использования и реализации
 catnip ref internal/view/view.go:35#874a ParseTarget  # адрес из ответа def
 catnip ref --limit 3 edit.Hash                   # не больше 3 строк
@@ -156,7 +157,7 @@ internal/nav/nav_test.go:144#ae97: 	return fmt.Sprintf("%s:%d#%s: %s\n", filepat
 ```bash
 catnip show internal/view/view.go::ParseTarget   # функция от докблока до конца
 catnip show internal/nav/nav.go::Navigator.Def   # метод: Type.Method; поле: Type.Field
-catnip show main.go --outline                    # строка каждого объявления файла
+catnip show --outline main.go                    # строка каждого объявления файла
 ```
 
 ```
