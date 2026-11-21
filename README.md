@@ -136,7 +136,7 @@ implementations:
 
 edit.Hash
 internal/edit/apply_test.go:12#4d83: 	return &edit.LineRange{From: from, To: to, FromHash: edit.Hash(fromLine), ToHash: edit.Hash(toLine)}
-main_test.go:51#a695: 		{name: "show -C0 glued", project: `{}`, before: "a\nb\nc\n", args: []string{"show", "-C0", "p/a.txt:2"}, code: ok, after: "a\nb\nc\n", tail: "2#" + edit.Hash("b") + "\tb\n"},
+main_test.go:50#a695: 		{name: "show -C0 glued", project: `{}`, before: "a\nb\nc\n", args: []string{"show", "-C0", "p/a.txt:2"}, code: ok, after: "a\nb\nc\n", tail: "2#" + edit.Hash("b") + "\tb\n"},
 internal/nav/nav_test.go:144#ae97: 	return fmt.Sprintf("%s:%d#%s: %s\n", filepath.FromSlash(path), n, edit.Hash(text), text)
 23 more lines in 7 files
 ```
