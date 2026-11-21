@@ -85,7 +85,7 @@ catnip stats
 
 After edit, write and rename catnip prints what changed and runs the fixers and checks
 configured for the file; --skip-checks of edit and write skips them.
-Flags go right after the command name, as above; anywhere after it is accepted too.
+Flags go right after the command name, as above; after all its arguments is accepted too.
 catnip <command> --help prints all flags of the command.
 ` + exitCodes
 
@@ -344,7 +344,7 @@ type showCmd struct {
 	C       int `name:"C" short:"C" default:"5"`
 	Outline bool
 	Rev     *string
-	Targets []string `arg:""`
+	Targets []string `arg:"" name:"path"`
 }
 
 func (s *showCmd) run(e env) int {
@@ -583,7 +583,7 @@ func commit(cfg *config.Config, path string, before, after []byte, showFixDiff, 
 
 type defCmd struct {
 	Body      bool
-	Questions []string `arg:""`
+	Questions []string `arg:"" name:"question"`
 }
 
 func (c *defCmd) run(e env) int {
@@ -596,7 +596,7 @@ func (c *defCmd) run(e env) int {
 
 type refCmd struct {
 	Limit     int      `default:"60"`
-	Questions []string `arg:""`
+	Questions []string `arg:"" name:"question"`
 }
 
 func (c *refCmd) run(e env) int {

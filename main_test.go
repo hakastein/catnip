@@ -97,6 +97,7 @@ func TestRun(t *testing.T) {
 		{name: "write flag after the path", project: `{"*.txt": {"check": {"no": "false"}}}`, before: "a\n", args: []string{"write", "p/a.txt", "--skip-checks"}, stdin: "b\n", code: ok, after: "b\n"},
 		{name: "edit with an unknown flag", project: `{}`, before: "a\n", args: []string{"edit", "p/a.txt", "--replace", "a", "b", "--middle"}, code: badUsage, after: "a\n"},
 		{name: "flag before the command", project: `{}`, before: "a\n", args: []string{"--skip-checks", "edit", "p/a.txt", "--replace", "a", "b"}, code: badUsage, after: "a\n"},
+		{name: "show flag between targets", project: `{}`, before: "a\n", args: []string{"show", "p/a.txt", "--gutter", "none", "p/a.txt"}, code: badUsage, after: "a\n"},
 		{name: "unknown command", project: `{}`, before: "a\n", args: []string{"cat", "p/a.txt"}, code: badUsage, after: "a\n"},
 		{name: "help flag after an unknown command", project: `{}`, before: "a\n", args: []string{"cat", "--help"}, code: badUsage, after: "a\n"},
 		{name: "help flag before a command", project: `{}`, before: "a\n", args: []string{"--help", "edit"}, code: ok, after: "a\n", tail: editHelp},
